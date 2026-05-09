@@ -274,4 +274,4 @@ cargo run -p control-plane -- --bind 127.0.0.1:9000
 
 ## License · 许可 · Licencia
 
-Apache 2.0
+MIT
