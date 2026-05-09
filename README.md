@@ -1,4 +1,4 @@
-# Open Agents Orchestration and Communication Platform
+# Open Agents Cowork Platform
 
 Rust-first multi-agent runtime platform for **capability-aware task orchestration** and **direct runtime-to-runtime dialogue** over **Google A2A / Agent2Agent-inspired JSON-RPC**.
 
