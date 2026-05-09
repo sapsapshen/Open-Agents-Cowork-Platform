@@ -16,19 +16,18 @@ use axum::{
 };
 use clap::Parser;
 use platform_a2a::{
-    A2ATask, A2aClient, AgentCard, AgentCardCapabilities, AgentSkill, JsonRpcRequest,
-    JsonRpcResponse, METHOD_AGENT_GET_CARD, METHOD_MESSAGE_SEND, METHOD_TASKS_GET, Message,
-    MessagePart, MessageRole, PLATFORM_TOKEN_HEADER, SendMessageParams, SendMessageResult,
-    TaskState, platform_api_token, require_platform_api_token, text_message, validate_endpoint,
+    A2ATask, AgentCard, AgentCardCapabilities, AgentSkill, JsonRpcRequest, JsonRpcResponse,
+    METHOD_AGENT_GET_CARD, METHOD_MESSAGE_SEND, METHOD_TASKS_GET, Message, MessageRole,
+    PLATFORM_TOKEN_HEADER, SendMessageParams, SendMessageResult, TaskState, platform_api_token,
+    require_platform_api_token, text_message, validate_endpoint,
 };
 use platform_domain::{
-    Artifact, CapabilitySignal, HealthStatus, Metadata, RuntimeDescriptor, RuntimeHealth,
-    RuntimeLoad, RuntimeRegistration, new_id,
+    HealthStatus, Metadata, RuntimeDescriptor, RuntimeHealth, RuntimeLoad, RuntimeRegistration,
+    new_id,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::RwLock;
-use tokio::time::{Duration, timeout};
+use tokio::time::Duration;
 use tracing::info;
 
 #[derive(Debug, Parser)]
@@ -43,7 +42,7 @@ struct Args {
     runtime_id: String,
     #[arg(long, default_value = "agent-1")]
     agent_id: String,
-    #[arg(long, default_value = "generalist")]
+    #[arg(long, default_value = "")]
     profile: String,
     #[arg(long, default_value = "2")]
     trust_tier: u8,
@@ -56,15 +55,8 @@ struct Args {
 #[derive(Clone)]
 struct AppState {
     runtime: RuntimeDescriptor,
-    client: A2aClient,
     inflight_tasks: Arc<AtomicU32>,
     tasks: Arc<RwLock<BTreeMap<String, A2ATask>>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ConsultSummary {
-    runtime_id: String,
-    response: String,
 }
 
 #[tokio::main]
@@ -85,7 +77,7 @@ async fn main() -> Result<()> {
         profile: args.profile.clone(),
         trust_tier: args.trust_tier,
         cost_per_task: args.cost_per_task,
-        capabilities: capabilities_for_profile(&args.profile),
+        capabilities: Vec::new(), // Real agents register their own capabilities
         health: RuntimeHealth {
             status: HealthStatus::Healthy,
             availability: 0.99,
@@ -101,7 +93,6 @@ async fn main() -> Result<()> {
         .build()?;
     let state = AppState {
         runtime: runtime.clone(),
-        client: A2aClient::new(client.clone()),
         inflight_tasks: Arc::new(AtomicU32::new(0)),
         tasks: Arc::new(RwLock::new(BTreeMap::new())),
     };
@@ -259,36 +250,45 @@ async fn process_message(state: &AppState, message: Message) -> Result<SendMessa
 }
 
 async fn process_message_inner(state: &AppState, message: Message) -> Result<SendMessageResult> {
-    let prompt = message
-        .parts
-        .iter()
-        .filter_map(|part| match part {
-            MessagePart::Text { text } => Some(text.clone()),
-            MessagePart::Json { .. } => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    // Extract the workflow metadata from the incoming message
     let workflow_role = message
         .metadata
         .get("workflow_role")
         .cloned()
-        .unwrap_or_else(|| "consult".to_string());
-    let collaborators = parse_collaborators(&message.metadata)?;
-    let consults = consult_peers(state, &message, &collaborators).await?;
-    let input_artifacts = parse_input_artifacts(&message.metadata)?;
+        .unwrap_or_else(|| "task".to_string());
+    let workflow_id = message
+        .metadata
+        .get("workflow_id")
+        .cloned()
+        .unwrap_or_else(|| "unknown".to_string());
 
-    let artifact = Artifact {
+    // Acknowledge receipt — real agents would process and produce meaningful output here.
+    // The runtime node is a protocol bridge; actual AI processing happens
+    // in external agent services connected via A2A.
+    let content = format!(
+        "# Task Acknowledged\n\n\
+         Runtime `{}` received a `{}` request for workflow `{}`.\n\n\
+         ## Message Received\n\
+         {}",
+        state.runtime.runtime_id,
+        workflow_role,
+        workflow_id,
+        message
+            .parts
+            .iter()
+            .filter_map(|part| match part {
+                platform_a2a::MessagePart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    let artifact = platform_domain::Artifact {
         artifact_id: new_id("artifact"),
-        name: format!("{}-output.md", workflow_role),
+        name: format!("{}-response.md", workflow_role),
         mime_type: "text/markdown".to_string(),
-        content: render_output(
-            &state.runtime,
-            &workflow_role,
-            &prompt,
-            &input_artifacts,
-            &consults,
-            &message.metadata,
-        ),
+        content,
     };
 
     let response_message = text_message(
@@ -296,7 +296,7 @@ async fn process_message_inner(state: &AppState, message: Message) -> Result<Sen
         MessageRole::Agent,
         None,
         message.context_id.clone(),
-        format!("completed {}", workflow_role),
+        format!("acknowledged {}", workflow_role),
     );
 
     let context_id = message.context_id.clone();
@@ -319,250 +319,17 @@ async fn process_message_inner(state: &AppState, message: Message) -> Result<Sen
     })
 }
 
-async fn consult_peers(
-    state: &AppState,
-    message: &Message,
-    collaborators: &[RuntimeDescriptor],
-) -> Result<Vec<ConsultSummary>> {
-    let consultation_depth = message
-        .metadata
-        .get("consultation_depth")
-        .and_then(|value| value.parse::<u8>().ok())
-        .unwrap_or(0);
-    if consultation_depth >= 2
-        || message
-            .metadata
-            .get("workflow_role")
-            .is_some_and(|role| role == "consult")
-    {
-        return Ok(Vec::new());
-    }
-
-    let mut results = Vec::new();
-    for collaborator in collaborators {
-        let consult_prompt = format!(
-            "Collaborator request from {}. Objective: {}. Provide 3 concise recommendations.",
-            state.runtime.runtime_id,
-            message
-                .metadata
-                .get("objective")
-                .cloned()
-                .unwrap_or_else(|| "unspecified".to_string())
-        );
-        let mut consult_message = text_message(
-            new_id("msg"),
-            MessageRole::User,
-            None,
-            message.context_id.clone(),
-            consult_prompt,
-        );
-        consult_message
-            .metadata
-            .insert("workflow_role".to_string(), "consult".to_string());
-        consult_message.metadata.insert(
-            "consultation_depth".to_string(),
-            (consultation_depth + 1).to_string(),
-        );
-        let response = timeout(
-            Duration::from_secs(15),
-            state
-                .client
-                .send_message(&collaborator.endpoint, consult_message),
-        )
-        .await
-        .map_err(|_| anyhow!("consultation timeout for {}", collaborator.runtime_id))?
-        .with_context(|| format!("consulting collaborator {}", collaborator.runtime_id))?;
-        let task = response
-            .task
-            .ok_or_else(|| anyhow!("collaborator {} returned no task", collaborator.runtime_id))?;
-        let artifact = task.artifacts.first().ok_or_else(|| {
-            anyhow!(
-                "collaborator {} returned no artifact",
-                collaborator.runtime_id
-            )
-        })?;
-        results.push(ConsultSummary {
-            runtime_id: collaborator.runtime_id.clone(),
-            response: artifact.content.clone(),
-        });
-    }
-    Ok(results)
-}
-
-fn parse_collaborators(metadata: &Metadata) -> Result<Vec<RuntimeDescriptor>> {
-    match metadata.get("collaborators") {
-        Some(value) if !value.is_empty() => {
-            if value.len() > 64 * 1024 {
-                return Err(anyhow!("collaborators metadata exceeds 64 KiB"));
-            }
-            let collaborators: Vec<RuntimeDescriptor> =
-                serde_json::from_str(value).context("parsing collaborators")?;
-            if collaborators.len() > 8 {
-                return Err(anyhow!("collaborator fan-out exceeds 8 runtimes"));
-            }
-            Ok(collaborators)
-        }
-        _ => Ok(Vec::new()),
-    }
-}
-
-fn parse_input_artifacts(metadata: &Metadata) -> Result<Vec<Artifact>> {
-    match metadata.get("input_artifacts") {
-        Some(value) if !value.is_empty() => {
-            if value.len() > 128 * 1024 {
-                return Err(anyhow!("input_artifacts metadata exceeds 128 KiB"));
-            }
-            serde_json::from_str(value).context("parsing input artifacts")
-        }
-        _ => Ok(Vec::new()),
-    }
-}
-
-fn render_output(
-    runtime: &RuntimeDescriptor,
-    workflow_role: &str,
-    prompt: &str,
-    input_artifacts: &[Artifact],
-    consults: &[ConsultSummary],
-    metadata: &Metadata,
-) -> String {
-    match workflow_role {
-        "plan" => render_plan(runtime, prompt, metadata),
-        "review" => render_review(prompt),
-        "synthesize" => render_synthesis(prompt, input_artifacts),
-        "consult" => render_consult(runtime),
-        "revise" => render_execution(runtime, prompt, consults, true),
-        _ => render_execution(runtime, prompt, consults, false),
-    }
-}
-
-fn render_plan(runtime: &RuntimeDescriptor, prompt: &str, metadata: &Metadata) -> String {
-    format!(
-        "# Capability-Aware Execution Plan\n\nGenerated by `{}`.\n\n## Objective\n{}\n\n## Recommended stages\n1. Planning and requirement extraction.\n2. Implementation on the strongest Rust/A2A runtime.\n3. Direct peer consultation over A2A for design critique.\n4. Independent review rounds.\n5. Revision until no material issues remain.\n6. Final synthesis.\n\n## Control data\n- Constraints: {}\n- Strategy: score by capability coverage, success rate, latency, and runtime load.\n",
-        runtime.runtime_id,
-        prompt,
-        metadata
-            .get("constraints")
-            .cloned()
-            .unwrap_or_else(|| "none".to_string())
-    )
-}
-
-fn render_execution(
-    runtime: &RuntimeDescriptor,
-    prompt: &str,
-    consults: &[ConsultSummary],
-    is_revision: bool,
-) -> String {
-    let mut sections = vec![
-        "# Rust Multi-Agent Platform".to_string(),
-        format!("Generated by `{}`.", runtime.runtime_id),
-        "## Workspace".to_string(),
-        "- apps/control-plane for orchestration and scheduling".to_string(),
-        "- apps/runtime-node for A2A-compliant runtime endpoints".to_string(),
-        "- apps/cli for operator access".to_string(),
-        "- crates/platform-domain, platform-a2a, platform-core for shared logic".to_string(),
-        "## Capability-Based Scheduling".to_string(),
-        "- Hard filters on required capabilities, trust tier, latency, and cost.".to_string(),
-        "- Weighted score on quality fit, availability, cost, and load.".to_string(),
-        "## A2A Dialogue Path".to_string(),
-        "- Each runtime exposes an Agent Card and JSON-RPC A2A endpoint.".to_string(),
-        "- Builder runtimes directly consult planner/reviewer peers through `message/send`."
-            .to_string(),
-        "- Control plane remains the orchestrator, not the message relay.".to_string(),
-        "## Prompt Context".to_string(),
-        prompt.to_string(),
-    ];
-
-    if !consults.is_empty() {
-        sections.push("## Peer Consultations".to_string());
-        for consult in consults {
-            sections.push(format!(
-                "- {} advised: {}",
-                consult.runtime_id,
-                consult.response.replace('\n', " ")
-            ));
-        }
-    }
-
-    if is_revision || prompt.contains("observability") {
-        sections.push("## Observability & Audit".to_string());
-        sections.push(
-            "- Correlate workflow_id, work_unit_id, runtime_id, task_id, and context_id across logs."
-                .to_string(),
-        );
-    }
-
-    if is_revision || prompt.contains("security") || prompt.contains("policy") {
-        sections.push("## Policy & Security".to_string());
-        sections.push("- Apply trust tiers, runtime admission policy, and version validation on every A2A call.".to_string());
-    }
-
-    if is_revision || prompt.contains("failure") {
-        sections.push("## Failure Handling".to_string());
-        sections.push(
-            "- Lease-based retries, explicit task terminal states, and revision loops close material issues."
-                .to_string(),
-        );
-    }
-
-    sections.join("\n")
-}
-
-fn render_review(prompt: &str) -> String {
-    let output = prompt.to_lowercase();
-    let mut issues = Vec::new();
-    if !output.contains("observability") {
-        issues.push("Add explicit observability and audit propagation.");
-    }
-    if !output.contains("policy") && !output.contains("security") {
-        issues.push("Document policy or security controls for cross-runtime traffic.");
-    }
-    if !output.contains("failure handling") {
-        issues.push("Describe failure handling, retries, and terminal task semantics.");
-    }
-    if !output.contains("a2a") {
-        issues.push("The output must explicitly describe A2A-based dialogue.");
-    }
-
-    if issues.is_empty() {
-        return "# Review Report\n\nVerdict: pass\n\n- ISSUE: none".to_string();
-    }
-
-    let issue_block = issues
-        .into_iter()
-        .map(|issue| format!("- ISSUE: {issue}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!("# Review Report\n\nVerdict: needs_revision\n\n{issue_block}")
-}
-
-fn render_synthesis(prompt: &str, input_artifacts: &[Artifact]) -> String {
-    let sources = input_artifacts
-        .iter()
-        .map(|artifact| format!("- {}", artifact.name))
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
-        "# Final Synthesis\n\n{}\n\n## Inputs\n{}\n\n## Outcome\nThe platform is composed as a Rust workspace with capability-aware scheduling, direct A2A runtime dialogue, and iterative review closure.",
-        prompt, sources
-    )
-}
-
-fn render_consult(runtime: &RuntimeDescriptor) -> String {
-    format!(
-        "Use {} capability profile `{}` to strengthen capability scoring, explicit A2A role boundaries, and review completeness.",
-        runtime.runtime_id, runtime.profile
-    )
-}
-
 fn build_agent_card(runtime: &RuntimeDescriptor) -> AgentCard {
     AgentCard {
         protocol_version: "1.0".to_string(),
         name: runtime.display_name.clone(),
         description: format!(
-            "{} runtime exposing A2A JSON-RPC and direct peer collaboration",
-            runtime.profile
+            "{} runtime — A2A-compliant agent node",
+            if runtime.profile.is_empty() {
+                "unconfigured"
+            } else {
+                &runtime.profile
+            }
         ),
         endpoint: runtime.endpoint.clone(),
         skills: runtime
@@ -584,52 +351,6 @@ fn build_agent_card(runtime: &RuntimeDescriptor) -> AgentCard {
         default_input_modes: vec!["text/plain".to_string(), "application/json".to_string()],
         default_output_modes: vec!["text/markdown".to_string(), "application/json".to_string()],
         metadata: Metadata::new(),
-    }
-}
-
-fn capabilities_for_profile(profile: &str) -> Vec<CapabilitySignal> {
-    match profile {
-        "planner" => vec![
-            capability("planning", 0.96, 180),
-            capability("architecture", 0.91, 200),
-            capability("synthesis", 0.74, 200),
-        ],
-        "builder" => vec![
-            capability("implementation", 0.97, 220),
-            capability("rust", 0.98, 190),
-            capability("a2a", 0.88, 230),
-            capability("planning", 0.62, 210),
-        ],
-        "reviewer" => vec![
-            capability("review", 0.98, 150),
-            capability("security", 0.92, 170),
-            capability("observability", 0.90, 170),
-            capability("architecture", 0.75, 180),
-        ],
-        "synthesizer" => vec![
-            capability("synthesis", 0.94, 180),
-            capability("reporting", 0.95, 160),
-            capability("review", 0.70, 200),
-        ],
-        _ => vec![
-            capability("implementation", 0.78, 220),
-            capability("rust", 0.82, 210),
-            capability("review", 0.80, 180),
-            capability("planning", 0.78, 180),
-            capability("synthesis", 0.80, 180),
-            capability("a2a", 0.80, 200),
-        ],
-    }
-}
-
-fn capability(name: &str, level: f32, median_latency_ms: u32) -> CapabilitySignal {
-    CapabilitySignal {
-        name: name.to_string(),
-        level,
-        success_rate: 0.97,
-        median_latency_ms,
-        max_parallelism: 4,
-        tags: vec![name.to_string()],
     }
 }
 

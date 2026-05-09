@@ -23,8 +23,6 @@ enum Command {
         objective: String,
         #[arg(long, value_delimiter = ',')]
         constraints: Vec<String>,
-        #[arg(long, default_value_t = 3)]
-        review_rounds: u8,
     },
     WorkflowStatus {
         #[arg(long, default_value = "http://127.0.0.1:9000")]
@@ -60,13 +58,11 @@ async fn main() -> Result<()> {
             control_plane,
             objective,
             constraints,
-            review_rounds,
         } => {
             validate_endpoint(&control_plane)?;
             let request = WorkflowRequest {
                 objective,
                 constraints,
-                review_rounds,
                 context_id: None,
             };
             let body = http

@@ -53,4 +53,8 @@ impl RuntimeRegistry {
     pub fn get(&self, runtime_id: &str) -> Option<RuntimeDescriptor> {
         self.inner.read().get(runtime_id).cloned()
     }
+
+    pub fn remove(&self, runtime_id: &str) -> Option<RuntimeDescriptor> {
+        self.inner.write().remove(runtime_id)
+    }
 }

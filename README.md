@@ -1,212 +1,277 @@
 # Open Agents Cowork Platform
 
-Rust-first multi-agent runtime platform for **capability-aware task orchestration** and **direct runtime-to-runtime dialogue** over **Google A2A / Agent2Agent-inspired JSON-RPC**.
+> **多智能体协同平台 · Multi-Agent Cowork Platform · Plataforma de Coworking Multi-Agente**
 
-## What this platform does
+A Rust-first, capability-aware multi-agent orchestration platform built on the [Google A2A (Agent-to-Agent) protocol](https://github.com/google/A2A). The platform automatically discovers AI agents on your machine, scores their capabilities, decomposes complex tasks into stages, and dispatches each stage to the best-fit runtime — all through direct A2A peer dialogue.
 
-- Orchestrates complex work as staged workflows: **plan -> execute -> review -> revise -> synthesize**
-- Assigns each stage to the best runtime using **actual runtime capabilities**, not static labels only
-- Lets runtimes **consult each other directly** through A2A-style `message/send` calls
-- Supports **review / fix / re-review loops** until no new material issues remain
-- Keeps the entire implementation in **Rust**
+---
 
-## Architecture
+## 项目特点 · Features · Características
 
-### Workspace layout
+| 特点 | Feature | Característica |
+|---|---|---|
+| **本地 Agent 自动识别** | Automatic local agent discovery | Descubrimiento automático de agentes locales |
+| **能力得分感知调度** | Capability-aware scheduling | Programación consciente de capacidades |
+| **Google A2A 协议通信** | Google A2A protocol | Protocolo Google A2A |
+| **第三方 AI 接入** | Third-party AI integration | Integración de IA de terceros |
+| **自动任务分解** | Automatic task decomposition | Descomposición automática de tareas |
+| **三语界面** | Trilingual UI (EN/ZH/ES) | Interfaz trilingüe |
 
-```text
-apps/
-  control-plane/   # registration, orchestration, workflow APIs
-  runtime-node/    # A2A runtime endpoint, direct peer collaboration
-  cli/             # operator CLI for listing runtimes and submitting workflows
+### 1. 本地 Agent Runtime 自动识别
 
-crates/
-  platform-domain/ # shared domain model
-  platform-a2a/    # A2A data model, JSON-RPC envelope, client
-  platform-core/   # registry, scheduler, orchestrator
+平台启动后，自动扫描您的系统环境，发现已安装的 AI 工具：
+
+| 自动发现 | Auto-detected | Detectado automáticamente |
+|---|---|---|
+| **Claude Code** — npm 全局安装的 Claude CLI | `which claude` + npm version | |
+| **OpenCode AI** — 开源 AI 编码智能体 | `which opencode` | |
+| **Ollama** — 本地大模型服务器（支持 llama3, mistral, qwen2 等） | `which ollama` + 常见安装路径 | |
+| **GitHub Copilot CLI** — 终端 Copilot | `which copilot` | |
+| **Agent Browser** — 浏览器自动化代理 | `which agent-browser` | |
+
+> 扫描结果以表格形式展示在 Dashboard → Settings → Auto-Detect 中。您勾选需要的 Agent 后，一键添加并启动，无需手动配置命令行参数。
+
+### 2. Agent Runtime 能力得分感知
+
+每个 Agent 在注册时都会上报其 **能力维度** 与 **能力得分**（0.0 ~ 1.0）：
+
+| 能力 | Capability | 默认 CLI 得分 | OpenAI 高端模型得分 |
+|---|---|---|---|
+| 规划 (Planning) | 任务分解与执行计划 | 0.85 | 0.90 (claude-4/gpt-4/o3) |
+| 执行 (Implementation) | 编写代码、生成内容 | 0.90 | 0.92 |
+| 综合 (Synthesis) | 汇总生成最终报告 | 0.85 | 0.90 |
+| 审查 (Review) | 审查输出质量 | 0.80 | 0.83 |
+
+调度器（Scheduler）根据多维度评分矩阵选择最优 Runtime：
+
+**硬过滤条件**（不满足则排除）：
+- 必须拥有当前阶段所需能力
+- 能力最低水平达标
+- 信任等级（trust tier）匹配
+- 延迟 / 成本预算在阈值内
+- 心跳在 15 秒窗口内（健康检查）
+- 未过载
+
+**加权评分**（总分最高者胜出）：
+```
+最终得分 = 必需能力匹配 × 0.55
+         + 偏好能力加分 × 0.20
+         + 可用性奖励   × 0.25
+         + 成本奖励     × 0.10
+         - 负载惩罚     × 0.20
+         - 队列惩罚     × 0.03
 ```
 
-### Core design
+### 3. Google A2A Agent 通信协议
 
-1. **Control plane**
-   - accepts workflow submissions
-   - persists in-memory workflow state
-   - scores runtimes against stage requirements
-   - dispatches stages to the selected runtime
+平台基于 [A2A（Agent-to-Agent）](https://github.com/google/A2A) 规范实现运行时之间的直接对话：
 
-2. **Runtime node**
-   - exposes an A2A-compatible JSON-RPC endpoint at `/a2a`
-   - publishes an Agent Card
-   - executes assigned work according to its profile
-   - directly consults peer runtimes through A2A when collaborators are attached
+| A2A 方法 | Method | 用途 |
+|---|---|---|
+| `agent/getCard` | GET Agent Card | 获取 Runtime 的技能声明与能力指标 |
+| `message/send` | Send Message | 发送工作指令，携带对话上下文 |
+| `tasks/get` | Get Task | 查询异步任务状态与结果 |
 
-3. **Capability-aware scheduler**
-   - applies hard filters for capability level, latency, trust tier, cost, and health
-   - then scores candidates with availability and load awareness
+- **传输层**：HTTP + JSON-RPC 2.0
+- **认证**：`x-platform-token` 请求头
+- **版本协商**：`A2A-Version: 1.0`
+- **上下文连续性**：`context_id` 贯穿工作流各阶段和 Runtime 间协作
+- **响应大小限制**：256 KiB 上限
 
-4. **Review loop**
-   - independent reviewer runtime inspects the current artifact
-   - material issues are fed back into a revise stage
-   - orchestration repeats until review stops finding new problems
+### 4. 支持第三方 AI 接入
 
-## A2A mapping
+您可以通过 Dashboard → Settings 添加外部 AI 服务。支持两种接入模式：
 
-The implementation follows the A2A model with pragmatic Rust bindings:
+#### OpenAI 兼容 API
+适用于 OpenAI、Anthropic API、Ollama、Zed AI、任意兼容端点。
 
-- **Agent Card**: `agent/getCard`
-- **Send Message**: `message/send`
-- **Get Task**: `tasks/get`
-- **Transport**: HTTP + JSON-RPC 2.0
-- **Context continuity**: `context_id` is preserved through stages and peer consultations
-- **Task output**: runtime returns an A2A task containing artifacts and history
+```json
+{
+  "type": "openai",
+  "base_url": "http://localhost:11434/v1",
+  "model": "llama3",
+  "api_key": "optional-key"
+}
+```
 
-This keeps the runtime boundary interoperable while leaving room for future extensions such as streaming and push notifications.
+#### CLI 进程
+适用于任意可通过命令行调用的 AI 工具（Claude CLI、Codex CLI、opencode 等）。
 
-## Security defaults
+```json
+{
+  "type": "stdio",
+  "command": "opencode",
+  "args": ["run", "--format", "json"],
+  "timeout_secs": 120
+}
+```
 
-- control-plane protected by `x-platform-token`
-- runtime A2A endpoint protected by `x-platform-token`
-- default token source: `PLATFORM_API_TOKEN`
-- token is required at process start; there is no fallback secret
-- outbound runtime endpoints are allow-listed by `PLATFORM_ALLOWED_HOSTS`
-- default allowed hosts: `127.0.0.1,localhost`
-- workflow and metadata payload sizes are bounded
-- HTTP clients and stage execution use explicit timeouts
+添加后，在 Settings 页面点击 **Launch**（启动），平台自动 spawn agent-adapter 进程并注册到控制平面，即可参与工作流调度。
 
-## Capability-based assignment
+### 5. 自动划分复杂任务并分配 Agent Runtime 执行
 
-Each runtime advertises measured capability signals:
+工作流提交后，Orchestrator 自动进入三阶段管道执行流程：
 
-- capability name
-- capability level
-- success rate
-- median latency
-- max parallelism
-- runtime health
-- runtime load
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Plan      │ ──> │  Execute    │ ──> │  Synthesize │
+│  规划阶段    │     │  执行阶段   │     │  综合阶段   │
+└─────────────┘     └─────────────┘     └─────────────┘
+```
 
-The control plane uses:
+1. **Plan（规划）** — 将目标发送给得分最高的 Planner Runtime，生成执行计划
+2. **Execute（执行）** — 将计划 + 目标发送给 Executor，产生工作成果
+3. **Synthesize（综合）** — 汇总目标、计划和执行结果，生成最终报告
 
-1. **hard filters**
-   - required capability present
-   - minimum level satisfied
-   - trust tier satisfied
-   - latency and cost budget respected
+每个阶段默认 60 秒超时，整体工作流 300 秒超时。执行状态通过 SSE（Server-Sent Events）实时推送到 Dashboard。
 
-2. **weighted scoring**
-   - required capability fit
-   - preferred capability boost
-   - availability bonus
-   - load penalty
-   - queue penalty
+---
 
-This is intentionally modeled after strong open-source scheduling patterns rather than naive round-robin dispatch.
+## Architecture · 架构 · Arquitectura
 
-## Open-source reference baseline
+### Workspace Layout
 
-The code is an original Rust implementation, but the module boundaries and operational patterns deliberately track proven open-source approaches:
+```text
+open-agents-cowork-platform/
+├── apps/
+│   ├── control-plane/        # 控制平面：注册、编排、API、Agent 管理器
+│   ├── agent-adapter/        # A2A 适配器：桥接到外部 AI Runtime
+│   ├── runtime-node/         # A2A Runtime 端点（旧版节点）
+│   ├── dashboard/            # Web Dashboard SPA（单页应用）
+│   └── cli/                  # 操作 CLI
+├── crates/
+│   ├── platform-domain/      # 共享领域模型
+│   ├── platform-a2a/         # A2A 数据模型、JSON-RPC 信封、客户端
+│   └── platform-core/        # 注册表、调度器、编排器
+└── start-platform.sh         # 一键启动脚本
+```
 
-- **A2A / Agent2Agent** for agent interoperability and direct dialogue semantics
-- **Kubernetes scheduler** for capability- and constraint-aware placement thinking
-- **Temporal / durable workflow engines** for staged orchestration and explicit state transitions
-- **OpenTelemetry / structured tracing** for workflow correlation and audit propagation
-- **Tokio + Axum + Reqwest** for high-quality async Rust service boundaries
+### Components · 组件 · Componentes
 
-## Run locally
+#### Control Plane
+- 接收工作流提交，提供 REST API
+- 管理 Runtime 注册与心跳（每 5 秒）
+- 运行能力感知调度器（评分矩阵）
+- 编排三阶段工作流执行
+- Agent 配置持久化（`target/platform-runtime/agents.json`）
+- Launch/stop agent-adapter 子进程
 
-### One-click startup on Windows
+#### Agent Adapter
+- 对每个 Agent 启动一个独立 HTTP 服务
+- 将 A2A 协议请求转发到后端 AI（CLI 进程或 OpenAI API）
+- 自动注册到控制平面并维持心跳
+- 支持 Stdio / OpenAI / Claude CLI / Codex CLI 四种后端
 
-From the project root:
+#### Dashboard
+- 单页应用（SPA），Hash 路由
+- 四个页面：Dashboard（提交工作流）、Workflows（查看列表与详情）、Runtimes（监控运行节点）、Settings（Agent 配置管理）
+- SSE 实时推送事件刷新页面
+- 支持三语界面：中文、English、Español
+
+---
+
+## Quick Start · 快速开始 · Inicio Rápido
+
+### Prerequisites · 前置条件 · Requisitos
+
+- Rust 1.85+ (edition 2024)
+- Node.js / npm（用于自动检测 npm 全局包）
+
+### One-Click Start · 一键启动 · Inicio con Un Click
+
+```bash
+# macOS / Linux
+./start-platform.sh
+```
+
+Windows:
 
 ```powershell
 .\start-platform.cmd
 ```
 
-This keeps startup in a single launcher window, builds the workspace once, then starts the control-plane and the four demo runtimes as managed background processes. If `PLATFORM_API_TOKEN`, `PLATFORM_ALLOWED_HOSTS`, or `RUST_LOG` are not already set, the script provides local defaults for the demo session.
+启动后打开：
 
-After startup, open:
-
-```text
-http://127.0.0.1:9000/
+```
+http://127.0.0.1:9000/dashboard
 ```
 
-Logs are written to `target\platform-runtime\logs`.
+会自动构建 workspace，启动 control-plane。Dashboard 中可通过 Settings → Auto-Detect 发现并启动本地 AI Agent。
 
-### One-click stop on Windows
+### Manual Start · 手动启动 · Inicio Manual
 
-From the project root:
+```bash
+# 1. 构建
+cargo build --workspace
 
-```powershell
-.\stop-platform.cmd
-```
-
-This stops only the processes started by `.\start-platform.cmd`.
-
-### 1. Start control plane
-
-```powershell
+# 2. 启动控制平面
+PLATFORM_API_TOKEN=local-review-token \
+RUST_LOG=info \
 cargo run -p control-plane -- --bind 127.0.0.1:9000
+
+# 3. 打开 Dashboard
+# http://127.0.0.1:9000/dashboard
+
+# 4. 在 Settings 页面添加并启动 Agent
 ```
 
-### 2. Start runtimes
+### Stop · 停止 · Detener
 
-```powershell
-cargo run -p runtime-node -- --bind 127.0.0.1:9101 --public-endpoint http://127.0.0.1:9101/a2a --control-plane http://127.0.0.1:9000 --runtime-id planner-1 --agent-id planner-1 --profile planner --auto-register
-cargo run -p runtime-node -- --bind 127.0.0.1:9102 --public-endpoint http://127.0.0.1:9102/a2a --control-plane http://127.0.0.1:9000 --runtime-id builder-1 --agent-id builder-1 --profile builder --auto-register
-cargo run -p runtime-node -- --bind 127.0.0.1:9103 --public-endpoint http://127.0.0.1:9103/a2a --control-plane http://127.0.0.1:9000 --runtime-id reviewer-1 --agent-id reviewer-1 --profile reviewer --auto-register
-cargo run -p runtime-node -- --bind 127.0.0.1:9104 --public-endpoint http://127.0.0.1:9104/a2a --control-plane http://127.0.0.1:9000 --runtime-id synthesizer-1 --agent-id synthesizer-1 --profile synthesizer --auto-register
+```bash
+./stop-platform.sh
 ```
 
-### 3. Inspect runtimes
+### Environment Variables · 环境变量 · Variables de Entorno
 
-```powershell
-cargo run -p cli -- list-runtimes --control-plane http://127.0.0.1:9000
-```
+| 变量 | Variable | 默认值 | 说明 |
+|---|---|---|---|
+| `PLATFORM_API_TOKEN` | API 认证令牌 | `local-review-token` | 所有 API 请求必须携带 |
+| `PLATFORM_ALLOWED_HOSTS` | 允许的主机 | `127.0.0.1,localhost` | 出站 Runtime 端点白名单 |
+| `RUST_LOG` | 日志级别 | `info` | 可选 `debug`, `warn`, `error` |
 
-### 4. Submit a workflow
+---
 
-```powershell
-cargo run -p cli -- submit-workflow --control-plane http://127.0.0.1:9000 --objective "Build a Rust platform for capability-aware agent orchestration using A2A direct dialogue" --constraints rust-only,a2a-direct-dialogue,capability-based-assignment,review-loop
-```
+## Dashboard · 仪表盘 · Panel de Control
 
-### Optional environment variables
+| 页面 | Tab | Descripción |
+|---|---|---|
+| **Dashboard** | 提交工作流目标，查看最近工作流 | Submit workflow objectives |
+| **Workflows** | 查看所有工作流，点击查看详细执行时间线 | View execution timeline |
+| **Runtimes** | 监控已注册的 Agent Runtime 状态和心跳 | Monitor registered runtimes |
+| **Settings** | 添加/编辑/启动/停止 AI Agent，自动检测系统工具 | Manage AI agents |
 
-```powershell
-$env:PLATFORM_API_TOKEN="replace-with-your-own-local-token"
-$env:PLATFORM_ALLOWED_HOSTS="127.0.0.1,localhost"
-```
+### i18n · 国际化 · Internacionalización
 
-## Runtime profiles
+右上角语言切换：English / 中文 / Español。所有 UI 文本通过 `data-i18n` 属性自动切换。
 
-- `planner`
-- `builder`
-- `reviewer`
-- `synthesizer`
-- `generalist`
+---
 
-Each profile maps to a different measured capability set, which changes scheduling outcomes.
+## Security · 安全 · Seguridad
 
-## Current implementation scope
+- 控制平面和 Runtime A2A 端点均受 `x-platform-token` 保护
+- 默认 Token 来源：`PLATFORM_API_TOKEN` 环境变量
+- 出站 Runtime 端点通过 `PLATFORM_ALLOWED_HOSTS` 白名单限制
+- 工作负载和元数据载荷大小有限制（10000 字符 Objective、50 个约束、256 KiB A2A 响应）
+- HTTP 客户端和阶段执行均设置显式超时
+- Agent 子进程自动清理
 
-Implemented now:
+---
 
-- capability-aware runtime registry
-- A2A-like JSON-RPC runtime boundary
-- direct peer consultations between runtimes
-- workflow orchestration with review loops
-- CLI and runnable local demo
+## Tech Stack · 技术栈 · Tecnología
 
-Planned extension points already preserved in the design:
+| 技术 | Technology | Propósito |
+|---|---|---|
+| **Rust** (edition 2024) | 核心开发语言 | Performance, safety, concurrency |
+| **Tokio** | 异步运行时 | Async I/O, process management |
+| **Axum** | HTTP 框架 | REST API, routing, middleware |
+| **Reqwest** | HTTP 客户端 | A2A JSON-RPC transport |
+| **JSON-RPC 2.0** | 协议 | Agent-to-Agent communication |
+| **SSE** | 实时推送 | Server-Sent Events for live updates |
+| **Serde** | 序列化 | JSON serialization/deserialization |
+| **Clap** | CLI 参数 | Argument parsing |
 
-- durable store adapter instead of in-memory workflow registry
-- streaming / SSE task updates
-- push notifications
-- external LLM runtime adapters
-- richer policy, mTLS, and audit pipelines
+---
 
-## Build and test
+## License · 许可 · Licencia
 
-```powershell
-cargo check --workspace
-cargo test --workspace
-```
+Apache 2.0

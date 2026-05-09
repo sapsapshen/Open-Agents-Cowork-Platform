@@ -180,7 +180,6 @@ pub struct WorkUnit {
 pub struct WorkflowRequest {
     pub objective: String,
     pub constraints: Vec<String>,
-    pub review_rounds: u8,
     pub context_id: Option<String>,
 }
 
@@ -215,4 +214,28 @@ pub struct WorkflowSubmissionResponse {
     pub status: WorkflowStatus,
     pub final_report: Option<Artifact>,
     pub audit_log: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentConfig {
+    pub id: String,
+    pub name: String,
+    pub backend_type: String,
+    pub base_url: Option<String>,
+    pub model: Option<String>,
+    pub api_key: Option<String>,
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    pub enabled: bool,
+    pub auto_launch: bool,
+}
+
+impl AgentConfig {
+    pub fn display_type(&self) -> &str {
+        match self.backend_type.as_str() {
+            "openai" => "OpenAI API",
+            "stdio" => "CLI Process",
+            _ => "Unknown",
+        }
+    }
 }

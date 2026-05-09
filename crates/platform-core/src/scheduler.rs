@@ -76,32 +76,40 @@ impl Scheduler {
         let mut reasons = Vec::new();
         let mut required_score = 0.0;
         for requirement in &requirements.required_capabilities {
-            let capability = runtime
+            match runtime
                 .capabilities
                 .iter()
-                .find(|capability| capability.name == requirement.capability)?;
-
-            if capability.level < requirement.min_level {
-                return None;
-            }
-
-            if let Some(min_success_rate) = requirements.min_success_rate
-                && capability.success_rate < min_success_rate
+                .find(|cap| cap.name == requirement.capability)
             {
-                return None;
+                Some(capability) => {
+                    if capability.level < requirement.min_level {
+                        return None;
+                    }
+                    if let Some(min_success_rate) = requirements.min_success_rate
+                        && capability.success_rate < min_success_rate
+                    {
+                        return None;
+                    }
+                    if let Some(max_latency_ms) = requirements.max_latency_ms
+                        && capability.median_latency_ms > max_latency_ms
+                    {
+                        return None;
+                    }
+                    required_score += capability.level * requirement.weight.max(0.1);
+                    reasons.push(format!(
+                        "required capability {} matched at {:.2}",
+                        requirement.capability, capability.level
+                    ));
+                }
+                None => {
+                    // Runtime doesn't advertise this capability. If it has NO capabilities
+                    // at all, treat it as a generic bridge that can handle any stage.
+                    // Only filter out runtimes that DO have capabilities but lack this one.
+                    if !runtime.capabilities.is_empty() {
+                        return None;
+                    }
+                }
             }
-
-            if let Some(max_latency_ms) = requirements.max_latency_ms
-                && capability.median_latency_ms > max_latency_ms
-            {
-                return None;
-            }
-
-            required_score += capability.level * requirement.weight.max(0.1);
-            reasons.push(format!(
-                "required capability {} matched at {:.2}",
-                requirement.capability, capability.level
-            ));
         }
 
         let mut preferred_score = 0.0;

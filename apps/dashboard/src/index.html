@@ -1,0 +1,1551 @@
+<!DOCTYPE html>
+<html lang="en" data-color-scheme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agents Cowork Platform</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0d1117;
+    --bg-card: #161b22;
+    --bg-hover: #1c2128;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --red: #f85149;
+    --blue: #58a6ff;
+    --purple: #bc8cff;
+    --orange: #d4760e;
+    --radius: 8px;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Noto Sans, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  button {
+    cursor: pointer;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px 16px;
+    font-size: 14px;
+    background: #21262d;
+    color: var(--text);
+    transition: background .15s;
+  }
+  button:hover { background: #30363d; }
+  button.primary {
+    background: #238636;
+    border-color: rgba(46,164,79,.4);
+    color: #fff;
+  }
+  button.primary:hover { background: #2ea043; }
+  button.danger {
+    background: #da3633;
+    border-color: rgba(248,81,73,.4);
+    color: #fff;
+  }
+  button.danger:hover { background: #f85149; }
+  input, textarea, select {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 8px 12px;
+    font-size: 14px;
+    font-family: inherit;
+    width: 100%;
+  }
+  textarea { resize: vertical; min-height: 80px; }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+
+  /* Layout */
+  .app-header {
+    border-bottom: 1px solid var(--border);
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    background: var(--bg-card);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .app-header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .app-header nav { display: flex; gap: 8px; }
+  .app-header nav a {
+    padding: 4px 12px;
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    font-size: 14px;
+    transition: all .15s;
+  }
+  .app-header nav a:hover, .app-header nav a.active {
+    color: var(--text);
+    background: var(--bg-hover);
+    text-decoration: none;
+  }
+  .app-header .right-group {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .lang-select {
+    font-size: 12px;
+    padding: 4px 8px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    cursor: pointer;
+    width: auto;
+  }
+  .lang-select:hover { color: var(--text); }
+  .app-header .connection {
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+  .status-dot.green { background: var(--green); }
+  .status-dot.yellow { background: var(--yellow); }
+  .status-dot.red { background: var(--red); }
+  .status-dot.gray { background: var(--text-muted); }
+
+  .content { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  .page { display: none; }
+  .page.active { display: block; }
+
+  /* Cards */
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; }
+  .card h3 { font-size: 14px; font-weight: 600; margin-bottom: 8px; color: var(--text-muted); }
+
+  /* Page description */
+  .page-desc {
+    background: rgba(88,166,255,.08);
+    border: 1px solid rgba(88,166,255,.2);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    margin-bottom: 16px;
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--text-muted);
+  }
+  .page-desc strong { color: var(--text); }
+
+  /* Badges */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .badge.green { background: rgba(63,185,80,.15); color: var(--green); }
+  .badge.yellow { background: rgba(210,153,34,.15); color: var(--yellow); }
+  .badge.red { background: rgba(248,81,73,.15); color: var(--red); }
+  .badge.blue { background: rgba(88,166,255,.15); color: var(--blue); }
+  .badge.gray { background: rgba(139,148,158,.15); color: var(--text-muted); }
+
+  /* Form */
+  .form-group { margin-bottom: 12px; }
+  .form-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px; color: var(--text-muted); }
+  .form-row { display: flex; gap: 12px; }
+  .form-row > * { flex: 1; }
+  .form-actions { display: flex; gap: 8px; margin-top: 16px; }
+
+  /* Table */
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 14px; }
+  th { font-weight: 600; color: var(--text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  tr:hover { background: var(--bg-hover); }
+  .clickable { cursor: pointer; }
+
+  /* Timeline */
+  .timeline { position: relative; padding-left: 28px; }
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 10px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--border);
+  }
+  .timeline-item {
+    position: relative;
+    padding: 12px 0;
+    padding-left: 16px;
+  }
+  .timeline-item::before {
+    content: '';
+    position: absolute;
+    left: -22px;
+    top: 16px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    background: var(--bg-card);
+  }
+  .timeline-item.completed::before { border-color: var(--green); background: var(--green); }
+  .timeline-item.failed::before { border-color: var(--red); background: var(--red); }
+  .timeline-item.running::before { border-color: var(--yellow); background: var(--yellow); }
+  .timeline-item .tl-header { display: flex; align-items: center; gap: 8px; }
+  .timeline-item .tl-header .tl-stage { font-weight: 600; font-size: 14px; }
+  .timeline-item .tl-header .tl-time { font-size: 12px; color: var(--text-muted); margin-left: auto; }
+  .timeline-item .tl-detail { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+
+  /* Audit log */
+  .audit-log {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 12px;
+    max-height: 300px;
+    overflow-y: auto;
+    line-height: 1.8;
+  }
+  .audit-log .entry { color: var(--text-muted); }
+  .audit-log .entry .time { color: var(--text-muted); }
+  .audit-log .entry.info { color: var(--text); }
+  .audit-log .entry.warn { color: var(--yellow); }
+  .audit-log .entry.err { color: var(--red); }
+
+  /* Runtime cards */
+  .runtime-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+  .runtime-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+  }
+  .runtime-card .rc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .runtime-card .rc-name { font-weight: 600; font-size: 15px; }
+  .runtime-card .rc-profile { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+  .runtime-card .rc-meta { font-size: 12px; color: var(--text-muted); }
+  .runtime-card .rc-meta span { display: inline-block; margin-right: 12px; }
+  .cap-bar {
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    margin: 4px 0;
+    overflow: hidden;
+  }
+  .cap-bar .fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width .3s;
+  }
+  .cap-bar .fill.green { background: var(--green); }
+  .cap-bar .fill.yellow { background: var(--yellow); }
+  .cap-bar .fill.orange { background: var(--orange); }
+  .cap-label { display: flex; justify-content: space-between; font-size: 12px; }
+  .cap-label .name { color: var(--text-muted); }
+
+  /* Workflow list */
+  .wf-list .wf-item {
+    display: flex;
+    align-items: center;
+    padding: 12px;
+    border-bottom: 1px solid var(--border);
+    gap: 12px;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .wf-list .wf-item:hover { background: var(--bg-hover); }
+  .wf-list .wf-item:last-child { border-bottom: none; }
+  .wf-list .wf-id { font-family: ui-monospace, monospace; font-size: 12px; color: var(--text-muted); min-width: 80px; }
+  .wf-list .wf-obj { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+  .wf-list .wf-time { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+  .wf-list .wf-actions { display: flex; gap: 8px; }
+
+  .empty-state { text-align: center; padding: 40px; color: var(--text-muted); }
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Back link */
+  .back-link { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; margin-bottom: 16px; color: var(--text-muted); }
+  .back-link:hover { color: var(--accent); text-decoration: none; }
+
+  /* Toasts */
+  .toast-container { position: fixed; top: 60px; right: 24px; z-index: 200; display: flex; flex-direction: column; gap: 8px; }
+  .toast {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 16px;
+    font-size: 13px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.4);
+    animation: slideIn .2s ease-out;
+    max-width: 400px;
+  }
+  .toast.success { border-left: 3px solid var(--green); }
+  .toast.error { border-left: 3px solid var(--red); }
+  .toast.info { border-left: 3px solid var(--accent); }
+  @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+  /* Loading states */
+  .loading { text-align: center; padding: 40px; color: var(--text-muted); }
+  .hidden { display: none !important; }
+  .flex-center { display: flex; align-items: center; justify-content: center; gap: 8px; }
+
+  /* Summary table */
+  .summary-table { width: 100%; }
+  .summary-table td { padding: 6px 12px; font-size: 13px; vertical-align: top; }
+  .summary-table td:first-child { color: var(--text-muted); white-space: nowrap; width: 1%; padding-right: 20px; }
+</style>
+</head>
+<body>
+<div class="app-header">
+  <h1><a href="#/" style="color:var(--text);text-decoration:none;">&#9670; <span data-i18n="appName">Cowork Platform</span></a></h1>
+  <nav>
+    <a href="#/" data-nav data-i18n="navDashboard">Dashboard</a>
+    <a href="#/workflows" data-nav data-i18n="navWorkflows">Workflows</a>
+    <a href="#/runtimes" data-nav data-i18n="navRuntimes">Runtimes</a>
+    <a href="#/settings" data-nav data-i18n="navSettings">Settings</a>
+  </nav>
+  <div class="right-group">
+    <select class="lang-select" id="lang-select" onchange="setLang(this.value)">
+      <option value="en">English</option>
+      <option value="zh">简体中文</option>
+      <option value="es">Español</option>
+    </select>
+    <div class="connection">
+      <span class="status-dot green" id="sse-dot"></span>
+      <span data-i18n="sseConnected" id="sse-status">Connected</span>
+    </div>
+  </div>
+</div>
+<div class="toast-container" id="toasts"></div>
+<div class="content">
+
+  <!-- ── Dashboard ── -->
+  <div class="page active" id="page-dashboard">
+    <div class="page-desc" data-i18n="descDashboard">
+      <strong>Dashboard</strong> — Submit a workflow objective to the platform. Agents are assigned to stages based on their registered capabilities. The workflow progresses through <strong>Plan</strong>, <strong>Execute</strong>, and <strong>Synthesize</strong> stages. Monitor real-time results below.
+    </div>
+    <div class="card">
+      <h2 data-i18n="submitTitle">Submit Workflow</h2>
+      <div class="form-group">
+        <label for="objective" data-i18n="objectiveLabel">Objective</label>
+        <textarea id="objective" data-i18n-placeholder="objectivePlaceholder"></textarea>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="constraints" data-i18n="constraintsLabel">Constraints (comma-separated)</label>
+          <input id="constraints" data-i18n-placeholder="constraintsPlaceholder" value="rust-only,a2a-direct-dialogue">
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="primary" id="btn-submit" onclick="submitWorkflow()"><span data-i18n="submitBtn">Submit Workflow</span></button>
+      </div>
+    </div>
+    <div class="card">
+      <h2 data-i18n="recentTitle">Recent Workflows</h2>
+      <div id="recent-workflows"><div class="empty-state" data-i18n="noWorkflows">No workflows yet. Submit one above!</div></div>
+    </div>
+  </div>
+
+  <!-- ── Workflows ── -->
+  <div class="page" id="page-workflows">
+    <div class="page-desc" data-i18n="descWorkflows">
+      <strong>Workflows</strong> — View all submitted workflows. Each workflow is a multi-stage execution: a <strong>Plan</strong> is created, the plan is <strong>Executed</strong> by a capable runtime, and results are <strong>Synthesized</strong> into a final report. Click any workflow to see its detailed execution timeline and per-stage outputs.
+    </div>
+    <h2 style="margin-bottom:16px;" data-i18n="allWorkflowsTitle">All Workflows</h2>
+    <div id="all-workflows-list"><div class="loading"><span class="spinner"></span> <span data-i18n="loading">Loading...</span></div></div>
+  </div>
+
+  <!-- ── Workflow Detail ── -->
+  <div class="page" id="page-workflow-detail">
+    <a href="#/workflows" class="back-link" data-i18n="backLink">&larr; Back to workflows</a>
+    <div id="workflow-detail-content"></div>
+  </div>
+
+  <!-- ── Runtimes ── -->
+  <div class="page" id="page-runtimes">
+    <div class="page-desc" data-i18n="descRuntimes">
+      <strong>Runtimes</strong> — Connected agent runtime nodes that process workflow stages. Each runtime registers its own <strong>capabilities</strong> (skills it can perform). The scheduler matches workflow stages to the most capable runtime based on capability levels, availability, and cost. Runtimes communicate via the <strong>A2A protocol</strong> (Agent-to-Agent).
+    </div>
+    <h2 style="margin-bottom:16px;" data-i18n="runtimesTitle">Registered Runtimes</h2>
+    <div id="runtimes-grid"><div class="loading"><span class="spinner"></span> <span data-i18n="loading">Loading...</span></div></div>
+  </div>
+
+  <!-- ── Settings ── -->
+  <div class="page" id="page-settings">
+    <div class="page-desc" data-i18n="descSettings">
+      <strong>Settings</strong> — Configure AI agents that the platform can use. Add OpenAI-compatible endpoints (e.g., Ollama, OpenAI API) or custom CLI agents. Agents must be launched before they can process workflow tasks.
+    </div>
+    <div class="card">
+      <h2 data-i18n="settingsAgentsTitle">AI Agents</h2>
+      <div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="primary" onclick="showAddAgentForm()" data-i18n="addAgentBtn">Add Agent</button>
+        <button onclick="detectAgents()" id="btn-detect" data-i18n="detectBtn">Auto-Detect</button>
+      </div>
+      <div id="agent-list"><div class="loading"><span class="spinner"></span> <span data-i18n="loading">Loading...</span></div></div>
+    </div>
+
+    <!-- Detected System Agents -->
+    <div id="detected-section" class="hidden">
+      <div class="card">
+        <h2 data-i18n="detectedTitle">Detected System Agents</h2>
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;" data-i18n="detectedDesc">The following AI tools were found on your system. Select which ones to add as agents.</p>
+        <div id="detected-list"><div class="loading"><span class="spinner"></span> <span data-i18n="loading">Loading...</span></div></div>
+      </div>
+    </div>
+
+    <!-- Add/Edit Agent Modal -->
+    <div id="agent-modal" class="hidden" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);z-index:300;display:flex;align-items:center;justify-content:center;">
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;width:520px;max-width:90vw;max-height:90vh;overflow-y:auto;">
+        <h3 id="agent-modal-title" style="margin-bottom:16px;" data-i18n="addAgentTitle">Add Agent</h3>
+        <input type="hidden" id="agent-form-id">
+        <div class="form-group">
+          <label for="agent-name" data-i18n="agentNameLabel">Name</label>
+          <input id="agent-name" data-i18n-placeholder="agentNamePlaceholder" placeholder="e.g. My Ollama">
+        </div>
+        <div class="form-group">
+          <label for="agent-backend" data-i18n="agentBackendLabel">Backend Type</label>
+          <select id="agent-backend" onchange="onBackendTypeChange()">
+            <option value="openai">OpenAI API</option>
+            <option value="stdio">CLI Process</option>
+            <option value="claude_cli">Claude Code</option>
+            <option value="codex_cli">Codex CLI</option>
+          </select>
+        </div>
+        <!-- OpenAI fields -->
+        <div id="openai-fields">
+          <div class="form-group">
+            <label for="agent-base-url" data-i18n="agentBaseUrlLabel">Base URL</label>
+            <input id="agent-base-url" data-i18n-placeholder="agentBaseUrlPlaceholder" placeholder="e.g. http://localhost:11434/v1">
+          </div>
+          <div class="form-group">
+            <label for="agent-model" data-i18n="agentModelLabel">Model</label>
+            <input id="agent-model" data-i18n-placeholder="agentModelPlaceholder" placeholder="e.g. llama3, gpt-4o">
+          </div>
+          <div class="form-group">
+            <label for="agent-api-key" data-i18n="agentApiKeyLabel">API Key (optional)</label>
+            <input id="agent-api-key" type="password" data-i18n-placeholder="agentApiKeyPlaceholder" placeholder="sk-...">
+          </div>
+        </div>
+        <!-- CLI fields -->
+        <div id="cli-fields" class="hidden">
+          <div class="form-group">
+            <label for="agent-command" data-i18n="agentCommandLabel">Command</label>
+            <input id="agent-command" data-i18n-placeholder="agentCommandPlaceholder" placeholder="e.g. /usr/local/bin/ai">
+          </div>
+          <div class="form-group">
+            <label for="agent-args" data-i18n="agentArgsLabel">Arguments (space-separated)</label>
+            <input id="agent-args" data-i18n-placeholder="agentArgsPlaceholder" placeholder="e.g. --model claude-3">
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="primary" onclick="saveAgent()" data-i18n="saveBtn">Save</button>
+          <button onclick="hideAgentForm()" data-i18n="cancelBtn">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── i18n ──────────────────────────────────────────────────
+const I18N = {
+  en: {
+    appName: 'Cowork Platform',
+    navDashboard: 'Dashboard',
+    navWorkflows: 'Workflows',
+    navRuntimes: 'Runtimes',
+    navSettings: 'Settings',
+    sseConnected: 'Connected',
+    sseDisconnected: 'Disconnected',
+    descDashboard: 'Dashboard — Submit a workflow objective to the platform. Agents are assigned to stages based on their registered capabilities. The workflow progresses through Plan, Execute, and Synthesize stages. Monitor real-time results below.',
+    descWorkflows: 'Workflows — View all submitted workflows. Each workflow is a multi-stage execution: a Plan is created, the plan is Executed by a capable runtime, and results are Synthesized into a final report. Click any workflow to see its detailed execution timeline and per-stage outputs.',
+    descRuntimes: 'Runtimes — Connected agent runtime nodes that process workflow stages. Each runtime registers its own capabilities (skills it can perform). The scheduler matches workflow stages to the most capable runtime based on capability levels, availability, and cost. Runtimes communicate via the A2A protocol (Agent-to-Agent). Runtimes are auto-discovered when they register with the platform. Known agent types include: Planner (decomposes tasks), Executor (delivers solutions), Synthesizer (generates reports), Reviewer (validates output), and general-purpose agents.',
+    descSettings: 'Settings — Configure AI agents that the platform can use. Add OpenAI-compatible endpoints (e.g., Ollama, OpenAI API) or custom CLI agents. Agents must be launched before they can process workflow tasks.',
+    settingsAgentsTitle: 'AI Agents',
+    addAgentBtn: 'Add Agent',
+    addAgentTitle: 'Add Agent',
+    editAgentTitle: 'Edit Agent',
+    agentNameLabel: 'Name',
+    agentNamePlaceholder: 'e.g. My Ollama',
+    agentBackendLabel: 'Backend Type',
+    agentBaseUrlLabel: 'Base URL',
+    agentBaseUrlPlaceholder: 'e.g. http://localhost:11434/v1',
+    agentModelLabel: 'Model',
+    agentModelPlaceholder: 'e.g. llama3, gpt-4o',
+    agentApiKeyLabel: 'API Key (optional)',
+    agentApiKeyPlaceholder: 'sk-...',
+    agentCommandLabel: 'Command',
+    agentCommandPlaceholder: 'e.g. /usr/local/bin/ai',
+    agentArgsLabel: 'Arguments (space-separated)',
+    agentArgsPlaceholder: 'e.g. --model claude-3',
+    saveBtn: 'Save',
+    cancelBtn: 'Cancel',
+    agentTableName: 'Name',
+    agentTableType: 'Type',
+    agentTableStatus: 'Status',
+    agentTableActions: 'Actions',
+    agentRunning: 'Running',
+    agentStopped: 'Stopped',
+    agentError: 'Error',
+    agentLaunchBtn: 'Launch',
+    agentStopBtn: 'Stop',
+    agentEditBtn: 'Edit',
+    agentDeleteBtn: 'Delete',
+    agentLaunched: 'Agent launched',
+    agentStoppedMsg: 'Agent stopped',
+    agentDeleted: 'Agent deleted',
+    agentSaved: 'Agent saved',
+    agentLaunchFailed: 'Failed to launch agent',
+    agentStopFailed: 'Failed to stop agent',
+    agentSaveFailed: 'Failed to save agent',
+    agentDeleteFailed: 'Failed to delete agent',
+    agentLoadFailed: 'Failed to load agents',
+    detectBtn: 'Auto-Detect',
+    detectedTitle: 'Detected System Agents',
+    detectedDesc: 'The following AI tools were found on your system. Select which ones to add as agents.',
+    addSelectedBtn: 'Add Selected',
+    alreadyConfigured: 'Already configured',
+    detectRunning: 'Scanning...',
+    detectFailed: 'Detection failed',
+    agentAddedFromDetect: 'Agent added from system detection',
+    submitTitle: 'Submit Workflow',
+    objectiveLabel: 'Objective',
+    objectivePlaceholder: 'Describe the task for the agents...',
+    constraintsLabel: 'Constraints (comma-separated)',
+    constraintsPlaceholder: 'e.g. rust-only, a2a-direct-dialogue',
+    submitBtn: 'Submit Workflow',
+    submittingBtn: 'Submitting...',
+    recentTitle: 'Recent Workflows',
+    allWorkflowsTitle: 'All Workflows',
+    runtimesTitle: 'Registered Runtimes',
+    noWorkflows: 'No workflows yet. Submit one above!',
+    noWorkflowsAll: 'No workflows yet.',
+    loading: 'Loading...',
+    backLink: '← Back to workflows',
+    noStages: 'No stages yet.',
+    constraints: 'Constraints',
+    none: 'None',
+    executionTimeline: 'Execution Timeline',
+    finalReport: 'Final Report',
+    auditLog: 'Audit Log',
+    noAuditEntries: 'No audit entries.',
+    viewOutput: 'View Output',
+    workflowLabel: 'Workflow',
+    created: 'Created',
+    onLabel: 'on',
+    noObjective: '(no objective)',
+    noRuntimes: 'No runtimes registered. Start some runtime nodes!',
+    tasksLabel: 'Tasks',
+    queuedLabel: 'Queued',
+    trustLabel: 'Trust',
+    heartbeatLabel: 'Heartbeat',
+    endpointLabel: 'Endpoint',
+    never: 'never',
+    ago: 'ago',
+    s: 's',
+    m: 'm',
+    h: 'h',
+    submitted: 'submitted',
+    stageStarted: 'stage_started',
+    stageCompleted: 'stage_completed',
+    stageFailed: 'stage_failed',
+    workflowCompleted: 'workflow_completed',
+    workflowFailed: 'workflow_failed',
+    workflowSubmitted: 'Workflow submitted',
+    submitFailed: 'Submit failed',
+    loadFailed: 'Failed to load',
+    failedToLoadWf: 'Failed to load workflow',
+    failedToLoadRuntimes: 'Failed to load runtimes',
+    failedToLoadWorkflows: 'Failed to load workflows',
+    pleaseEnterObjective: 'Please enter an objective',
+    noRuntimesForStage: 'No runtimes available. Add and launch an agent in Settings, or check agent-adapter processes.',
+    statusRunning: 'Running',
+    statusPending: 'Pending',
+    statusCompleted: 'Completed',
+    statusFailed: 'Failed',
+    statusHealthy: 'Healthy',
+    statusDegraded: 'Degraded',
+    statusUnavailable: 'Unavailable',
+    prefixed: 'ago',
+  },
+  zh: {
+    appName: '协作平台',
+    navDashboard: '控制台',
+    navWorkflows: '工作流',
+    navRuntimes: '运行时',
+    navSettings: '设置',
+    sseConnected: '已连接',
+    sseDisconnected: '已断开',
+    descDashboard: '控制台 —— 向平台提交工作流目标。代理将根据其注册的能力被分配到各阶段。工作流经过”计划”、”执行”和”综合”三个阶段。下方实时显示执行结果。',
+    descWorkflows: '工作流 —— 查看所有已提交的工作流。每个工作流包含多个执行阶段：创建”计划”、由具备相应能力的运行时”执行”计划、最后”综合”结果生成最终报告。点击任一工作流可查看详细的执行时间线和各阶段输出。',
+    descRuntimes: '运行时 —— 连接到平台的代理运行时节点，用于处理工作流各阶段。每个运行时自行注册其能力（可执行的技能）。调度器根据能力等级、可用性和成本将工作流阶段匹配到最合适的运行时。运行时之间通过 A2A 协议进行通信。运行时可通过向平台注册实现自动发现。已知的代理类型包括：规划器（分解任务）、执行器（交付解决方案）、综合器（生成报告）、审查器（验证输出）以及通用代理。',
+    descSettings: '设置 —— 配置平台可使用的 AI 代理。添加 OpenAI 兼容端点（如 Ollama、OpenAI API）或自定义 CLI 代理。代理必须先启动才能处理工作流任务。',
+    settingsAgentsTitle: 'AI 代理',
+    addAgentBtn: '添加代理',
+    addAgentTitle: '添加代理',
+    editAgentTitle: '编辑代理',
+    agentNameLabel: '名称',
+    agentNamePlaceholder: '例如：我的 Ollama',
+    agentBackendLabel: '后端类型',
+    agentBaseUrlLabel: '基础 URL',
+    agentBaseUrlPlaceholder: '例如：http://localhost:11434/v1',
+    agentModelLabel: '模型',
+    agentModelPlaceholder: '例如：llama3、gpt-4o',
+    agentApiKeyLabel: 'API 密钥（可选）',
+    agentApiKeyPlaceholder: 'sk-...',
+    agentCommandLabel: '命令',
+    agentCommandPlaceholder: '例如：/usr/local/bin/ai',
+    agentArgsLabel: '参数（空格分隔）',
+    agentArgsPlaceholder: '例如：--model claude-3',
+    saveBtn: '保存',
+    cancelBtn: '取消',
+    agentTableName: '名称',
+    agentTableType: '类型',
+    agentTableStatus: '状态',
+    agentTableActions: '操作',
+    agentRunning: '运行中',
+    agentStopped: '已停止',
+    agentError: '错误',
+    agentLaunchBtn: '启动',
+    agentStopBtn: '停止',
+    agentEditBtn: '编辑',
+    agentDeleteBtn: '删除',
+    agentLaunched: '代理已启动',
+    agentStoppedMsg: '代理已停止',
+    agentDeleted: '代理已删除',
+    agentSaved: '代理已保存',
+    agentLaunchFailed: '代理启动失败',
+    agentStopFailed: '代理停止失败',
+    agentSaveFailed: '代理保存失败',
+    agentDeleteFailed: '代理删除失败',
+    agentLoadFailed: '加载代理失败',
+    detectBtn: '自动检测',
+    detectedTitle: '检测到的系统代理',
+    detectedDesc: '以下 AI 工具已在系统中检测到。选择要添加为代理的项目。',
+    addSelectedBtn: '添加选中项',
+    alreadyConfigured: '已配置',
+    detectRunning: '扫描中...',
+    detectFailed: '检测失败',
+    agentAddedFromDetect: '已从系统检测中添加代理',
+    submitTitle: '提交工作流',
+    objectiveLabel: '目标',
+    objectivePlaceholder: '描述代理需要完成的任务……',
+    constraintsLabel: '约束条件（逗号分隔）',
+    constraintsPlaceholder: '例如：rust-only, a2a-direct-dialogue',
+    submitBtn: '提交工作流',
+    submittingBtn: '提交中……',
+    recentTitle: '最近的工作流',
+    allWorkflowsTitle: '所有工作流',
+    runtimesTitle: '已注册的运行时',
+    noWorkflows: '尚无工作流，请在上方提交！',
+    noWorkflowsAll: '尚无工作流。',
+    loading: '加载中……',
+    backLink: '← 返回工作流列表',
+    noStages: '尚无阶段。',
+    constraints: '约束条件',
+    none: '无',
+    executionTimeline: '执行时间线',
+    finalReport: '最终报告',
+    auditLog: '审计日志',
+    noAuditEntries: '无审计记录。',
+    viewOutput: '查看输出',
+    workflowLabel: '工作流',
+    created: '创建于',
+    onLabel: '分配到',
+    noObjective: '(无目标)',
+    noRuntimes: '尚无注册的运行时。请启动一些运行时节点！',
+    tasksLabel: '任务',
+    queuedLabel: '队列中',
+    trustLabel: '信任等级',
+    heartbeatLabel: '心跳',
+    endpointLabel: '端点',
+    never: '从未',
+    ago: '前',
+    s: '秒',
+    m: '分',
+    h: '小时',
+    submitted: 'submitted',
+    stageStarted: 'stage_started',
+    stageCompleted: 'stage_completed',
+    stageFailed: 'stage_failed',
+    workflowCompleted: 'workflow_completed',
+    workflowFailed: 'workflow_failed',
+    workflowSubmitted: '工作流已提交',
+    submitFailed: '提交失败',
+    loadFailed: '加载失败',
+    failedToLoadWf: '加载工作流失败',
+    failedToLoadRuntimes: '加载运行时失败',
+    failedToLoadWorkflows: '加载工作流列表失败',
+    pleaseEnterObjective: '请输入目标',
+    noRuntimesForStage: '没有可用的运行时。请在设置中添加并启动代理，或检查 agent-adapter 进程。',
+    statusRunning: '运行中',
+    statusPending: '等待中',
+    statusCompleted: '已完成',
+    statusFailed: '失败',
+    statusHealthy: '健康',
+    statusDegraded: '降级',
+    statusUnavailable: '不可用',
+  },
+  es: {
+    appName: 'Plataforma Colaborativa',
+    navDashboard: 'Panel',
+    navWorkflows: 'Flujos',
+    navRuntimes: 'Ejecutores',
+    navSettings: 'Configuración',
+    sseConnected: 'Conectado',
+    sseDisconnected: 'Desconectado',
+    descDashboard: 'Panel — Envíe un objetivo de flujo de trabajo a la plataforma. Los agentes se asignan a las etapas según sus capacidades registradas. El flujo avanza por las etapas Planificar, Ejecutar y Sintetizar. Supervise los resultados en tiempo real.',
+    descWorkflows: 'Flujos — Vea todos los flujos de trabajo enviados. Cada flujo es una ejecución multi-etapa: se crea un Plan, un ejecutor capaz lo Ejecuta, y los resultados se Sintetizan en un informe final. Haga clic en cualquier flujo para ver su línea de tiempo detallada y las salidas por etapa.',
+    descRuntimes: 'Ejecutores — Nodos de ejecutores de agentes conectados que procesan las etapas del flujo de trabajo. Cada ejecutor registra sus propias capacidades. El planificador empareja las etapas con el ejecutor más capaz según niveles de capacidad, disponibilidad y costo. Los ejecutores se comunican mediante el protocolo A2A. Los ejecutores se autodescubren al registrarse en la plataforma. Tipos de agente conocidos: Planificador (descompone tareas), Ejecutor (entrega soluciones), Sintetizador (genera informes), Revisor (valida resultados) y agentes de propósito general.',
+    descSettings: 'Configuración — Configure los agentes de IA que la plataforma puede usar. Añada endpoints compatibles con OpenAI (ej. Ollama, API de OpenAI) o agentes CLI personalizados. Los agentes deben iniciarse antes de que puedan procesar tareas del flujo de trabajo.',
+    settingsAgentsTitle: 'Agentes de IA',
+    addAgentBtn: 'Añadir Agente',
+    addAgentTitle: 'Añadir Agente',
+    editAgentTitle: 'Editar Agente',
+    agentNameLabel: 'Nombre',
+    agentNamePlaceholder: 'ej. Mi Ollama',
+    agentBackendLabel: 'Tipo de Backend',
+    agentBaseUrlLabel: 'URL Base',
+    agentBaseUrlPlaceholder: 'ej. http://localhost:11434/v1',
+    agentModelLabel: 'Modelo',
+    agentModelPlaceholder: 'ej. llama3, gpt-4o',
+    agentApiKeyLabel: 'Clave API (opcional)',
+    agentApiKeyPlaceholder: 'sk-...',
+    agentCommandLabel: 'Comando',
+    agentCommandPlaceholder: 'ej. /usr/local/bin/ai',
+    agentArgsLabel: 'Argumentos (separados por espacios)',
+    agentArgsPlaceholder: 'ej. --model claude-3',
+    saveBtn: 'Guardar',
+    cancelBtn: 'Cancelar',
+    agentTableName: 'Nombre',
+    agentTableType: 'Tipo',
+    agentTableStatus: 'Estado',
+    agentTableActions: 'Acciones',
+    agentRunning: 'Ejecutando',
+    agentStopped: 'Detenido',
+    agentError: 'Error',
+    agentLaunchBtn: 'Iniciar',
+    agentStopBtn: 'Detener',
+    agentEditBtn: 'Editar',
+    agentDeleteBtn: 'Eliminar',
+    agentLaunched: 'Agente iniciado',
+    agentStoppedMsg: 'Agente detenido',
+    agentDeleted: 'Agente eliminado',
+    agentSaved: 'Agente guardado',
+    agentLaunchFailed: 'Error al iniciar agente',
+    agentStopFailed: 'Error al detener agente',
+    agentSaveFailed: 'Error al guardar agente',
+    agentDeleteFailed: 'Error al eliminar agente',
+    agentLoadFailed: 'Error al cargar agentes',
+    detectBtn: 'Detectar',
+    detectedTitle: 'Agentes Detectados',
+    detectedDesc: 'Las siguientes herramientas de IA fueron encontradas en su sistema. Seleccione cuáles agregar como agentes.',
+    addSelectedBtn: 'Agregar Seleccionados',
+    alreadyConfigured: 'Ya configurado',
+    detectRunning: 'Escaneando...',
+    detectFailed: 'Detección fallida',
+    agentAddedFromDetect: 'Agente agregado desde detección del sistema',
+    submitTitle: 'Enviar Flujo',
+    objectiveLabel: 'Objetivo',
+    objectivePlaceholder: 'Describa la tarea para los agentes...',
+    constraintsLabel: 'Restricciones (separadas por comas)',
+    constraintsPlaceholder: 'ej. rust-only, a2a-direct-dialogue',
+    submitBtn: 'Enviar Flujo',
+    submittingBtn: 'Enviando...',
+    recentTitle: 'Flujos Recientes',
+    allWorkflowsTitle: 'Todos los Flujos',
+    runtimesTitle: 'Ejecutores Registrados',
+    noWorkflows: 'Aún no hay flujos. ¡Envíe uno arriba!',
+    noWorkflowsAll: 'Aún no hay flujos.',
+    loading: 'Cargando...',
+    backLink: '← Volver a flujos',
+    noStages: 'Aún no hay etapas.',
+    constraints: 'Restricciones',
+    none: 'Ninguna',
+    executionTimeline: 'Línea de Tiempo',
+    finalReport: 'Informe Final',
+    auditLog: 'Registro de Auditoría',
+    noAuditEntries: 'Sin entradas de auditoría.',
+    viewOutput: 'Ver Salida',
+    workflowLabel: 'Flujo',
+    created: 'Creado',
+    onLabel: 'en',
+    noObjective: '(sin objetivo)',
+    noRuntimes: 'No hay ejecutores registrados. ¡Inicie algunos nodos ejecutores!',
+    tasksLabel: 'Tareas',
+    queuedLabel: 'En cola',
+    trustLabel: 'Confianza',
+    heartbeatLabel: 'Latido',
+    endpointLabel: 'Endpoint',
+    never: 'nunca',
+    ago: 'atrás',
+    s: 's',
+    m: 'm',
+    h: 'h',
+    submitted: 'submitted',
+    stageStarted: 'stage_started',
+    stageCompleted: 'stage_completed',
+    stageFailed: 'stage_failed',
+    workflowCompleted: 'workflow_completed',
+    workflowFailed: 'workflow_failed',
+    workflowSubmitted: 'Flujo enviado',
+    submitFailed: 'Error al enviar',
+    loadFailed: 'Error al cargar',
+    failedToLoadWf: 'Error al cargar el flujo',
+    failedToLoadRuntimes: 'Error al cargar ejecutores',
+    failedToLoadWorkflows: 'Error al cargar flujos',
+    pleaseEnterObjective: 'Por favor ingrese un objetivo',
+    noRuntimesForStage: 'No hay ejecutores disponibles. Agregue e inicie un agente en Configuración, o verifique los procesos agent-adapter.',
+    statusRunning: 'Ejecutando',
+    statusPending: 'Pendiente',
+    statusCompleted: 'Completado',
+    statusFailed: 'Fallido',
+    statusHealthy: 'Saludable',
+    statusDegraded: 'Degradado',
+    statusUnavailable: 'No disponible',
+  },
+};
+
+let currentLang = localStorage.getItem('lang') || 'en';
+
+function t(key) {
+  return (I18N[currentLang] && I18N[currentLang][key]) || (I18N.en[key]) || key;
+}
+
+function setLang(lang) {
+  currentLang = lang;
+  localStorage.setItem('lang', lang);
+  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : lang === 'es' ? 'es' : 'en';
+  document.getElementById('lang-select').value = lang;
+  applyI18n();
+  // Re-render dynamic content
+  renderWorkflowLists();
+  renderRuntimes();
+  const hash = location.hash || '#/';
+  if (hash.startsWith('#/workflows/')) {
+    renderWorkflowDetail(hash.split('/')[2]);
+  }
+  const sseStatus = document.getElementById('sse-status');
+  if (sseStatus) sseStatus.textContent = sseConnected ? t('sseConnected') : t('sseDisconnected');
+}
+
+function applyI18n() {
+  // Static elements with data-i18n
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    el.textContent = t(key);
+  });
+  // Placeholders
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    const key = el.getAttribute('data-i18n-placeholder');
+    el.placeholder = t(key);
+  });
+}
+
+// ── State ─────────────────────────────────────────────────
+const API_TOKEN = localStorage.getItem('platform_token') || 'local-review-token';
+let workflowsCache = [];
+let runtimesCache = [];
+let sseConnected = false;
+
+// ── Routing ────────────────────────────────────────────────
+function navigate() {
+  const hash = location.hash || '#/';
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('[data-nav]').forEach(a => a.classList.remove('active'));
+
+  if (hash === '#/' || hash === '') {
+    document.getElementById('page-dashboard').classList.add('active');
+    document.querySelector('[data-nav="dashboard"]')?.classList.add('active');
+  } else if (hash.startsWith('#/workflows/')) {
+    document.getElementById('page-workflow-detail').classList.add('active');
+    const id = hash.split('/')[2];
+    renderWorkflowDetail(id);
+  } else if (hash === '#/workflows') {
+    document.getElementById('page-workflows').classList.add('active');
+    document.querySelector('[data-nav="workflows"]')?.classList.add('active');
+    fetchWorkflows();
+  } else if (hash === '#/runtimes') {
+    document.getElementById('page-runtimes').classList.add('active');
+    document.querySelector('[data-nav="runtimes"]')?.classList.add('active');
+    fetchRuntimes();
+  } else if (hash === '#/settings') {
+    document.getElementById('page-settings').classList.add('active');
+    document.querySelector('[data-nav="settings"]')?.classList.add('active');
+    fetchAgents();
+  }
+}
+window.addEventListener('hashchange', navigate);
+window.addEventListener('load', () => {
+  setLang(currentLang);
+  document.querySelectorAll('[data-nav]').forEach(a => {
+    if (a.getAttribute('href') === (location.hash || '#/')) a.classList.add('active');
+  });
+  navigate();
+});
+
+// ── HTTP helpers ──────────────────────────────────────────
+async function api(path, opts = {}) {
+  const resp = await fetch(path, {
+    headers: { 'Content-Type': 'application/json', 'x-platform-token': API_TOKEN, ...opts.headers },
+    ...opts,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`HTTP ${resp.status}: ${text.slice(0, 200)}`);
+  }
+  return resp.json();
+}
+
+function statusBadge(s) {
+  const map = {
+    running: ['yellow', t('statusRunning')],
+    pending: ['blue', t('statusPending')],
+    completed: ['green', t('statusCompleted')],
+    failed: ['red', t('statusFailed')],
+    healthy: ['green', t('statusHealthy')],
+    degraded: ['yellow', t('statusDegraded')],
+    unavailable: ['red', t('statusUnavailable')],
+  };
+  const entry = map[s?.toLowerCase()];
+  const cls = entry ? entry[0] : 'gray';
+  const label = entry ? entry[1] : s;
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+
+function timeAgo(iso) {
+  if (!iso) return '';
+  const ms = Date.now() - new Date(iso).getTime();
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}${t('s')} ${t('ago')}`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}${t('m')} ${t('ago')}`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}${t('h')} ${t('ago')}`;
+  return new Date(iso).toLocaleDateString(currentLang === 'zh' ? 'zh-CN' : currentLang === 'es' ? 'es' : 'en-US');
+}
+
+function shortId(id) { return id ? id.split('-').slice(0,2).join('-') : '?'; }
+
+function toast(msg, type = 'info') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+// ── SSE ───────────────────────────────────────────────────
+let eventSource = null;
+
+function connectSSE() {
+  if (eventSource) eventSource.close();
+  eventSource = new EventSource('/api/events');
+  let lastId = 0;
+
+  eventSource.onopen = () => {
+    document.getElementById('sse-dot').className = 'status-dot green';
+    document.getElementById('sse-status').textContent = t('sseConnected');
+    sseConnected = true;
+  };
+
+  eventSource.addEventListener('submitted', e => { processEvent(JSON.parse(e.data)); });
+  eventSource.addEventListener('stage_started', e => { processEvent(JSON.parse(e.data)); });
+  eventSource.addEventListener('stage_completed', e => { processEvent(JSON.parse(e.data)); });
+  eventSource.addEventListener('stage_failed', e => { processEvent(JSON.parse(e.data)); });
+  eventSource.addEventListener('workflow_completed', e => { processEvent(JSON.parse(e.data)); });
+  eventSource.addEventListener('workflow_failed', e => { processEvent(JSON.parse(e.data)); });
+
+  eventSource.onerror = () => {
+    document.getElementById('sse-dot').className = 'status-dot red';
+    document.getElementById('sse-status').textContent = t('sseDisconnected');
+    sseConnected = false;
+    setTimeout(connectSSE, 3000);
+  };
+}
+
+function processEvent(event) {
+  const hash = location.hash || '#/';
+  if (hash === '#/workflows' || hash === '#/') fetchWorkflows(true);
+  if (hash === '#/runtimes') fetchRuntimes();
+  if (hash === '#/settings') fetchAgents();
+  if (hash.startsWith('#/workflows/')) {
+    const id = hash.split('/')[2];
+    if (id === event.workflow_id) renderWorkflowDetail(id);
+  }
+}
+
+// ── Submit Workflow ──────────────────────────────────────
+async function submitWorkflow() {
+  const objective = document.getElementById('objective').value.trim();
+  if (!objective) { toast(t('pleaseEnterObjective'), 'error'); return; }
+  const constraints = document.getElementById('constraints').value.split(',').map(s => s.trim()).filter(Boolean);
+  const btn = document.getElementById('btn-submit');
+  btn.disabled = true;
+  btn.textContent = t('submittingBtn');
+  try {
+    const result = await api('/workflows/submit', {
+      method: 'POST',
+      body: JSON.stringify({ objective, constraints }),
+    });
+    toast(`${t('workflowSubmitted')}: ${shortId(result.workflow_id)}`, 'success');
+    document.getElementById('objective').value = '';
+    location.hash = `#/workflows/${result.workflow_id}`;
+  } catch (e) {
+    toast(`${t('submitFailed')}: ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('submitBtn');
+  }
+}
+
+// ── Fetch Workflows ─────────────────────────────────────
+async function fetchWorkflows(silent = false) {
+  if (!silent) {
+    const el = document.getElementById('all-workflows-list');
+    if (el) el.innerHTML = `<div class="loading"><span class="spinner"></span> ${t('loading')}</div>`;
+  }
+  try {
+    workflowsCache = await api('/workflows');
+    renderWorkflowLists();
+  } catch (e) {
+    if (!silent) toast(`${t('failedToLoadWorkflows')}: ${e.message}`, 'error');
+  }
+}
+
+function renderWorkflowLists() {
+  const allEl = document.getElementById('all-workflows-list');
+  if (allEl) {
+    if (workflowsCache.length === 0) {
+      allEl.innerHTML = `<div class="empty-state">${t('noWorkflowsAll')}</div>`;
+    } else {
+      allEl.innerHTML = renderWorkflowTable(workflowsCache);
+    }
+  }
+
+  const recentEl = document.getElementById('recent-workflows');
+  if (recentEl) {
+    if (workflowsCache.length === 0) {
+      recentEl.innerHTML = `<div class="empty-state">${t('noWorkflows')}</div>`;
+    } else {
+      const recent = workflowsCache.slice(-10).reverse();
+      recentEl.innerHTML = renderWorkflowTable(recent);
+    }
+  }
+}
+
+function renderWorkflowTable(wfs) {
+  const rp = runtimesCache;
+  function firstRuntimeProfile(w) {
+    const unit = (w.work_units || [])[0];
+    if (!unit || !unit.assigned_runtime_id) return '';
+    const r = rp.find(r => r.runtime_id === unit.assigned_runtime_id);
+    return r ? runtimeProfileLabel(r.profile) : '';
+  }
+  return `<div class="wf-list">${wfs.map(w => `
+    <div class="wf-item" onclick="location.hash='#/workflows/${w.workflow_id}'">
+      <span class="wf-id">${shortId(w.workflow_id)}</span>
+      <span class="wf-obj">${escHtml(w.request?.objective || t('noObjective'))}</span>
+      ${statusBadge(w.status)}
+      ${firstRuntimeProfile(w) ? `<span class="badge gray">${escHtml(firstRuntimeProfile(w))}</span>` : ''}
+      <span class="wf-time">${timeAgo(w.created_at)}</span>
+    </div>
+  `).join('')}</div>`;
+}
+
+// ── Workflow Detail ─────────────────────────────────────
+async function renderWorkflowDetail(id) {
+  const el = document.getElementById('workflow-detail-content');
+  el.innerHTML = `<div class="loading"><span class="spinner"></span> ${t('loading')}</div>`;
+  try {
+    const wf = await api(`/workflows/${id}`);
+    el.innerHTML = workflowDetailHTML(wf);
+  } catch (e) {
+    el.innerHTML = `<div class="empty-state">${t('failedToLoadWf')}: ${e.message}</div>`;
+  }
+}
+
+function runtimeProfileLabel(profile) {
+  if (!profile) return 'Unknown';
+  const map = {
+    'stdio:/bin/cat': 'Echo Service',
+    'claude-cli': 'Claude Code',
+    'codex-cli': 'Codex CLI',
+  };
+  if (map[profile]) return map[profile];
+  if (profile.startsWith('stdio:')) return profile.replace('stdio:', '') + ' (CLI)';
+  if (profile.startsWith('openai:')) return profile.replace('openai:', '') + ' (API)';
+  return profile;
+}
+
+function workflowDetailHTML(wf) {
+    const runtimeProfiles = {};
+  (runtimesCache || []).forEach(r => { runtimeProfiles[r.runtime_id] = r.profile || 'unknown'; });
+  const units = (wf.work_units || []).map((u, i) => ({
+    ...u,
+    kindLabel: u.kind?.charAt(0).toUpperCase() + u.kind?.slice(1) || 'Unknown',
+    statusClass: u.status?.toLowerCase() === 'completed' ? 'completed' :
+                  u.status?.toLowerCase() === 'failed' ? 'failed' :
+                  u.status?.toLowerCase() === 'running' || u.status?.toLowerCase() === 'assigned' ? 'running' : '',
+  }));
+
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <div>
+        <h2 style="margin:0;">${t('workflowLabel')} ${shortId(wf.workflow_id)}</h2>
+        <p style="color:var(--text-muted);font-size:14px;margin-top:4px;">${escHtml(wf.request?.objective || '')}</p>
+      </div>
+      <div style="text-align:right;">
+        ${statusBadge(wf.status)}
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">${t('created')} ${timeAgo(wf.created_at)}</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+      <div class="card">
+        <h3>${t('constraints')}</h3>
+        <div style="display:flex;flex-wrap:wrap;gap:4px;">
+          ${(wf.request?.constraints || []).map(c => `<span class="badge gray">${escHtml(c)}</span>`).join('') || `<span style="color:var(--text-muted);font-size:13px;">${t('none')}</span>`}
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>${t('executionTimeline')}</h2>
+      ${units.length === 0 ? `<div class="empty-state">${t('noStages')}</div>` : `
+      <div class="timeline">
+        ${units.map(u => `
+        <div class="timeline-item ${u.statusClass}">
+          <div class="tl-header">
+            <span class="tl-stage">${u.kindLabel}</span>
+            ${statusBadge(u.status)}
+            ${u.assigned_runtime_id ? `<span style="font-size:12px;color:var(--text-muted);">${t('onLabel')} ${escHtml(u.assigned_runtime_id)} <span class="badge gray">${escHtml(runtimeProfileLabel(runtimeProfiles[u.assigned_runtime_id] || ''))}</span></span>` : ''}
+          </div>
+          ${u.objective ? `<div class="tl-detail">${escHtml(u.objective.slice(0, 200))}</div>` : ''}
+          ${u.instructions ? `<div class="tl-detail">${escHtml(u.instructions.slice(0, 200))}</div>` : ''}
+          ${u.output?.content ? `<details style="margin-top:8px;"><summary style="font-size:13px;cursor:pointer;color:var(--accent);">${t('viewOutput')}</summary><pre style="background:#0d1117;border:1px solid var(--border);border-radius:4px;padding:8px;margin-top:4px;font-size:12px;overflow-x:auto;max-height:200px;">${escHtml(u.output.content)}</pre></details>` : ''}
+          ${u.review_feedback ? `<div style="margin-top:8px;padding:8px;background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.2);border-radius:4px;font-size:12px;color:var(--yellow);">${escHtml(u.review_feedback)}</div>` : ''}
+        </div>
+        `).join('')}
+      </div>
+      `}
+    </div>
+
+    ${wf.final_report?.content ? `
+    <div class="card">
+      <h2>${t('finalReport')}</h2>
+      <pre style="background:#0d1117;border:1px solid var(--border);border-radius:4px;padding:12px;font-size:13px;overflow-x:auto;max-height:400px;">${escHtml(wf.final_report.content)}</pre>
+    </div>
+    ` : ''}
+
+    <div class="card">
+      <h2>${t('auditLog')}</h2>
+      <div class="audit-log">
+        ${(wf.audit_log || []).length === 0 ? `<span class="entry" style="color:var(--text-muted);">${t('noAuditEntries')}</span>` :
+          (wf.audit_log || []).map(entry => `<div class="entry info">${escHtml(entry)}</div>`).join('')}
+      </div>
+    </div>
+  `;
+}
+
+// ── Runtimes ──────────────────────────────────────────────
+async function fetchRuntimes() {
+  const el = document.getElementById('runtimes-grid');
+  try {
+    const data = await api('/runtimes');
+    runtimesCache = Array.isArray(data) ? data : [];
+    renderRuntimes();
+  } catch (e) {
+    el.innerHTML = `<div class="empty-state">${t('failedToLoadRuntimes')}: ${e.message}</div>`;
+  }
+}
+
+function renderRuntimes() {
+  const el = document.getElementById('runtimes-grid');
+  if (runtimesCache.length === 0) {
+    el.innerHTML = `<div class="empty-state">${t('noRuntimes')}</div>`;
+    return;
+  }
+  el.innerHTML = `<div class="runtime-grid">${runtimesCache.map(r => runtimeCard(r)).join('')}</div>`;
+}
+
+function runtimeCard(r) {
+  const health = (r.health?.status || 'unknown').toLowerCase();
+  const healthClass = health === 'healthy' ? 'green' : health === 'degraded' ? 'yellow' : 'red';
+  const caps = r.capabilities || [];
+  return `
+    <div class="runtime-card">
+      <div class="rc-header">
+        <span class="rc-name">${escHtml(r.display_name || r.runtime_id)}</span>
+        <span class="status-dot ${healthClass}"></span>
+      </div>
+      <div class="rc-profile">${escHtml(r.profile || '')} &middot; ${escHtml(r.runtime_id)}</div>
+      <div class="rc-meta">
+        <span>${t('tasksLabel')}: ${r.load?.active_tasks ?? 0}/${r.load?.max_tasks ?? 4}</span>
+        <span>${t('queuedLabel')}: ${r.load?.queued_tasks ?? 0}</span>
+        <span>${t('trustLabel')}: ${r.trust_tier ?? '?'}</span>
+      </div>
+      ${caps.length > 0 ? `
+      <div style="margin-top:12px;">
+        ${caps.map(c => `
+          <div class="cap-label">
+            <span class="name">${escHtml(c.name)}</span>
+            <span>${(c.level * 100).toFixed(0)}%</span>
+          </div>
+          <div class="cap-bar">
+            <div class="fill ${c.level >= 0.9 ? 'green' : c.level >= 0.7 ? 'yellow' : 'orange'}" style="width:${c.level * 100}%"></div>
+          </div>
+        `).join('')}
+      </div>
+      ` : ''}
+      <div style="margin-top:8px;font-size:11px;color:var(--text-muted);">
+        ${t('heartbeatLabel')}: ${r.health?.last_heartbeat_at ? timeAgo(r.health.last_heartbeat_at) : t('never')}
+        &middot; ${t('endpointLabel')}: ${r.endpoint ? escHtml(r.endpoint) : 'N/A'}
+      </div>
+    </div>
+  `;
+}
+
+// ── Agents / Settings ──────────────────────────────────────
+
+let agentsCache = [];
+
+async function fetchAgents() {
+  const el = document.getElementById('agent-list');
+  try {
+    const data = await api('/api/agents');
+    agentsCache = Array.isArray(data) ? data : [];
+    renderAgents();
+  } catch (e) {
+    el.innerHTML = `<div class="empty-state">${t('agentLoadFailed')}: ${e.message}</div>`;
+  }
+}
+
+function renderAgents() {
+  const el = document.getElementById('agent-list');
+  if (agentsCache.length === 0) {
+    el.innerHTML = `<div class="empty-state">${t('settingsAgentsTitle')}: ${t('none')}. ${t('addAgentBtn')}</div>`;
+    return;
+  }
+  el.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>${t('agentTableName')}</th>
+          <th>${t('agentTableType')}</th>
+          <th>${t('agentTableStatus')}</th>
+          <th>${t('agentTableActions')}</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${agentsCache.map(a => agentTableRow(a)).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function agentTableRow(entry) {
+  const cfg = entry.config || {};
+  const proc = entry.process || {};
+  const status = proc.status || 'stopped';
+  const statusClass = status === 'running' ? 'green' : status === 'starting' ? 'yellow' : status === 'error' ? 'red' : 'gray';
+  const statusLabel = status === 'running' ? t('agentRunning') : status === 'starting' ? t('detectRunning') : status === 'error' ? t('agentError') : t('agentStopped');
+  const typeLabel = cfg.backend_type === 'openai' ? 'OpenAI API' :
+                    cfg.backend_type === 'stdio' ? `CLI: ${escHtml(cfg.command || '')}` :
+                    cfg.backend_type === 'claude_cli' ? 'Claude Code' :
+                    cfg.backend_type === 'codex_cli' ? 'Codex CLI' : escHtml(cfg.backend_type);
+  const modelInfo = cfg.model ? escHtml(cfg.model) : '';
+  return `
+    <tr>
+      <td>
+        <strong>${escHtml(cfg.name || cfg.id)}</strong>
+        <div style="font-size:11px;color:var(--text-muted);font-family:monospace;">${escHtml(cfg.id)}</div>
+        ${modelInfo ? `<div style="font-size:11px;color:var(--text-muted);">${modelInfo}</div>` : ''}
+      </td>
+      <td style="font-size:13px;">${typeLabel}</td>
+      <td><span class="status-dot ${statusClass}" style="vertical-align:middle;margin-right:4px;"></span> ${statusLabel}</td>
+      <td style="white-space:nowrap;">
+        ${status === 'stopped'
+          ? `<button class="primary" onclick="launchAgent('${cfg.id}')" style="font-size:12px;padding:4px 10px;">${t('agentLaunchBtn')}</button> `
+          : `<button onclick="stopAgent('${cfg.id}')" style="font-size:12px;padding:4px 10px;">${t('agentStopBtn')}</button> `
+        }
+        <button onclick="showEditAgentForm('${cfg.id}')" style="font-size:12px;padding:4px 10px;">${t('agentEditBtn')}</button>
+        <button class="danger" onclick="deleteAgent('${cfg.id}')" style="font-size:12px;padding:4px 10px;">${t('agentDeleteBtn')}</button>
+      </td>
+    </tr>
+  `;
+}
+
+function showAddAgentForm() {
+  document.getElementById('agent-form-id').value = '';
+  document.getElementById('agent-name').value = '';
+  document.getElementById('agent-backend').value = 'openai';
+  document.getElementById('agent-base-url').value = '';
+  document.getElementById('agent-model').value = '';
+  document.getElementById('agent-api-key').value = '';
+  document.getElementById('agent-command').value = '';
+  document.getElementById('agent-args').value = '';
+  document.getElementById('agent-modal-title').textContent = t('addAgentTitle');
+  onBackendTypeChange();
+  document.getElementById('agent-modal').classList.remove('hidden');
+}
+
+function showEditAgentForm(id) {
+  const entry = agentsCache.find(a => a.config && a.config.id === id);
+  if (!entry) return;
+  const cfg = entry.config;
+  document.getElementById('agent-form-id').value = cfg.id;
+  document.getElementById('agent-name').value = cfg.name || '';
+  document.getElementById('agent-backend').value = cfg.backend_type || 'openai';
+  document.getElementById('agent-base-url').value = cfg.base_url || '';
+  document.getElementById('agent-model').value = cfg.model || '';
+  document.getElementById('agent-api-key').value = cfg.api_key || '';
+  document.getElementById('agent-command').value = cfg.command || '';
+  document.getElementById('agent-args').value = (cfg.args || []).join(' ');
+  document.getElementById('agent-modal-title').textContent = t('editAgentTitle');
+  onBackendTypeChange();
+  document.getElementById('agent-modal').classList.remove('hidden');
+}
+
+function hideAgentForm() {
+  document.getElementById('agent-modal').classList.add('hidden');
+}
+
+function onBackendTypeChange() {
+  const type = document.getElementById('agent-backend').value;
+  document.getElementById('openai-fields').classList.toggle('hidden', type !== 'openai');
+  document.getElementById('cli-fields').classList.toggle('hidden', type !== 'stdio');
+}
+
+async function saveAgent() {
+  const editId = document.getElementById('agent-form-id').value;
+  const name = document.getElementById('agent-name').value.trim();
+  const backendType = document.getElementById('agent-backend').value;
+  if (!name) { toast('Name is required', 'error'); return; }
+  const id = editId || name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  const config = { id, name, backend_type: backendType, enabled: true, auto_launch: false, args: [] };
+  if (backendType === 'openai') {
+    config.base_url = document.getElementById('agent-base-url').value.trim() || undefined;
+    config.model = document.getElementById('agent-model').value.trim() || undefined;
+    config.api_key = document.getElementById('agent-api-key').value.trim() || undefined;
+  } else if (backendType === 'stdio') {
+    config.command = document.getElementById('agent-command').value.trim() || undefined;
+    const argsStr = document.getElementById('agent-args').value.trim();
+    config.args = argsStr ? argsStr.split(/\s+/).filter(Boolean) : [];
+  }
+  try {
+    if (editId) {
+      await api(`/api/agents/${editId}`, { method: 'PUT', body: JSON.stringify(config) });
+    } else {
+      await api('/api/agents', { method: 'POST', body: JSON.stringify(config) });
+    }
+    toast(t('agentSaved'), 'success');
+    hideAgentForm();
+    fetchAgents();
+  } catch (e) {
+    toast(`${t('agentSaveFailed')}: ${e.message}`, 'error');
+  }
+}
+
+async function launchAgent(id) {
+  try {
+    await api(`/api/agents/${id}/launch`, { method: 'POST' });
+    toast(t('agentLaunched'), 'success');
+    fetchAgents();
+  } catch (e) {
+    toast(`${t('agentLaunchFailed')}: ${e.message}`, 'error');
+  }
+}
+
+async function stopAgent(id) {
+  try {
+    await api(`/api/agents/${id}/stop`, { method: 'POST' });
+    toast(t('agentStoppedMsg'), 'info');
+    fetchAgents();
+  } catch (e) {
+    toast(`${t('agentStopFailed')}: ${e.message}`, 'error');
+  }
+}
+
+async function deleteAgent(id) {
+  if (!confirm(`Delete agent "${id}"?`)) return;
+  try {
+    await api(`/api/agents/${id}`, { method: 'DELETE' });
+    toast(t('agentDeleted'), 'info');
+    fetchAgents();
+  } catch (e) {
+    toast(`${t('agentDeleteFailed')}: ${e.message}`, 'error');
+  }
+}
+
+// ── Auto-Detect ──────────────────────────────────────────
+
+let detectedCache = [];
+
+async function detectAgents() {
+  const btn = document.getElementById('btn-detect');
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = t('detectRunning');
+  document.getElementById('detected-section').classList.remove('hidden');
+  document.getElementById('detected-list').innerHTML = `<div class="loading"><span class="spinner"></span> ${t('detectRunning')}</div>`;
+  try {
+    const data = await api('/api/agents/detect');
+    detectedCache = Array.isArray(data) ? data : [];
+    renderDetectedAgents();
+    if (detectedCache.length === 0) {
+      toast('No new AI tools detected on this system.', 'info');
+    }
+  } catch (e) {
+    document.getElementById('detected-list').innerHTML = `<div class="empty-state">${t('detectFailed')}: ${e.message}</div>`;
+    toast(`${t('detectFailed')}: ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
+  }
+}
+
+function renderDetectedAgents() {
+  const el = document.getElementById('detected-list');
+  if (detectedCache.length === 0) {
+    el.innerHTML = `<div class="empty-state">${t('detectedTitle')}: ${t('none')}</div>`;
+    return;
+  }
+  const hasUnconfigured = detectedCache.some(a => !a.already_configured);
+  el.innerHTML = `
+    ${hasUnconfigured ? `<div style="margin-bottom:12px;"><button class="primary" onclick="addSelectedDetected()" data-i18n="addSelectedBtn">Add Selected</button></div>` : ''}
+    <table>
+      <thead>
+        <tr>
+          ${hasUnconfigured ? '<th style="width:32px;"></th>' : ''}
+          <th>${t('agentTableName')}</th>
+          <th>${t('agentTableType')}</th>
+          <th>${t('agentTableStatus')}</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${detectedCache.map(a => detectedRow(a, hasUnconfigured)).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function detectedRow(agent, showCheckbox) {
+  const typeLabel = agent.backend_type === 'openai' ? 'OpenAI API' :
+                    agent.backend_type === 'stdio' ? `CLI: ${escHtml(agent.command || '')}` :
+                    agent.backend_type === 'claude_cli' ? 'Claude Code' :
+                    agent.backend_type === 'codex_cli' ? 'Codex CLI' : escHtml(agent.backend_type);
+  const modelInfo = agent.model ? escHtml(agent.model) : '';
+  return `
+    <tr>
+      ${showCheckbox ? `<td><input type="checkbox" class="detect-chk" value="${escHtml(agent.name)}" data-id="${escHtml(agent.name.toLowerCase().replace(/[^a-z0-9-]/g, '-'))}" ${agent.already_configured ? 'disabled' : ''}></td>` : ''}
+      <td>
+        <strong>${escHtml(agent.name)}</strong>
+        ${modelInfo ? `<div style="font-size:11px;color:var(--text-muted);">${modelInfo}</div>` : ''}
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px;max-width:400px;">${escHtml(agent.description)}</div>
+      </td>
+      <td style="font-size:13px;">${typeLabel}</td>
+      <td>${agent.already_configured ? `<span class="badge gray">${t('alreadyConfigured')}</span>` : `<span class="badge blue">${t('agentStopped')}</span>`}</td>
+    </tr>
+  `;
+}
+
+async function addSelectedDetected() {
+  const checkboxes = document.querySelectorAll('.detect-chk:checked');
+  if (checkboxes.length === 0) {
+    toast('No agents selected.', 'info');
+    return;
+  }
+  let added = 0;
+  for (const cb of checkboxes) {
+    const name = cb.getAttribute('data-id');
+    const agent = detectedCache.find(a => {
+      const aid = a.name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+      return aid === name;
+    });
+    if (!agent || agent.already_configured) continue;
+    const id = agent.name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const config = {
+      id,
+      name: agent.name,
+      backend_type: agent.backend_type,
+      enabled: true,
+      auto_launch: false,
+      args: agent.args || [],
+    };
+    if (agent.backend_type === 'openai' && agent.base_url) {
+      config.base_url = agent.base_url;
+      config.model = agent.model;
+    }
+    if (agent.backend_type === 'stdio' && agent.command) {
+      config.command = agent.command;
+    }
+    if (agent.backend_type === 'claude_cli') {
+      config.command = agent.command;
+    }
+    try {
+      await api('/api/agents', { method: 'POST', body: JSON.stringify(config) });
+      added++;
+    } catch (e) {
+      toast(`Failed to add ${agent.name}: ${e.message}`, 'error');
+    }
+  }
+  if (added > 0) {
+    toast(`${t('agentAddedFromDetect')}: ${added}`, 'success');
+    fetchAgents();
+    detectAgents(); // refresh detected list
+  }
+}
+
+// ── Utility ──────────────────────────────────────────────
+function escHtml(s) {
+  if (s == null) return '';
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+// ── Init ─────────────────────────────────────────────────
+connectSSE();
+fetchWorkflows();
+fetchRuntimes();
+
+// Periodically refresh data
+setInterval(() => {
+  const hash = location.hash || '#/';
+  if (hash === '#/' || hash === '#/workflows') fetchWorkflows(true);
+  if (hash === '#/runtimes') fetchRuntimes();
+  if (hash === '#/settings') fetchAgents();
+}, 10000);
+</script>
+</body>
+</html>

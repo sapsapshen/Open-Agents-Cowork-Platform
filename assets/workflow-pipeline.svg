@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 320" font-family="system-ui, -apple-system, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0d1117"/>
+      <stop offset="100%" stop-color="#161b22"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#58a6ff"/>
+    </marker>
+  </defs>
+  <rect width="700" height="320" fill="url(#bg)" rx="12"/>
+
+  <text x="350" y="30" text-anchor="middle" fill="#e6edf3" font-size="15" font-weight="bold">工作流三阶段执行管道</text>
+
+  <!-- Stage 1: Submit -->
+  <ellipse cx="80" cy="90" rx="50" ry="22" fill="#238636" opacity="0.9"/>
+  <text x="80" y="94" text-anchor="middle" fill="#fff" font-size="12" font-weight="bold">提交任务</text>
+
+  <line x1="130" y1="90" x2="170" y2="90" stroke="#58a6ff" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Stage 2: Plan -->
+  <rect x="175" y="68" width="140" height="44" rx="8" fill="#1c2128" stroke="#d29922" stroke-width="1.5"/>
+  <text x="245" y="88" text-anchor="middle" fill="#e3b341" font-size="13" font-weight="bold">① Plan 规划</text>
+  <text x="245" y="103" text-anchor="middle" fill="#8b949e" font-size="10">capability: planning ≥ 0.5</text>
+
+  <line x1="315" y1="90" x2="355" y2="90" stroke="#58a6ff" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Stage 3: Execute -->
+  <rect x="360" y="68" width="140" height="44" rx="8" fill="#1c2128" stroke="#d29922" stroke-width="1.5"/>
+  <text x="430" y="88" text-anchor="middle" fill="#e3b341" font-size="13" font-weight="bold">② Execute 执行</text>
+  <text x="430" y="103" text-anchor="middle" fill="#8b949e" font-size="10">capability: implementation ≥ 0.5</text>
+
+  <line x1="500" y1="90" x2="540" y2="90" stroke="#58a6ff" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Stage 4: Synthesize -->
+  <rect x="545" y="68" width="120" height="44" rx="8" fill="#1c2128" stroke="#d29922" stroke-width="1.5"/>
+  <text x="605" y="88" text-anchor="middle" fill="#e3b341" font-size="13" font-weight="bold">③ Synthesize</text>
+  <text x="605" y="103" text-anchor="middle" fill="#8b949e" font-size="10">capability: synthesis ≥ 0.5</text>
+
+  <!-- Result -->
+  <path d="M 605 112 L 605 140 L 350 140 L 350 160" fill="none" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <ellipse cx="350" cy="170" rx="60" ry="20" fill="#2ea043" opacity="0.8"/>
+  <text x="350" y="174" text-anchor="middle" fill="#fff" font-size="12" font-weight="bold">最终报告</text>
+
+  <!-- Timeout info -->
+  <text x="350" y="205" text-anchor="middle" fill="#8b949e" font-size="10">每阶段 60s 超时 · 整体工作流 300s 超时</text>
+  <text x="350" y="222" text-anchor="middle" fill="#8b949e" font-size="10">SSE 实时推送事件：submitted → stage_started → stage_completed → workflow_completed</text>
+
+  <!-- Runtime scoring table -->
+  <text x="350" y="255" text-anchor="middle" fill="#e6edf3" font-size="14" font-weight="bold">能力评分矩阵 (示例)</text>
+
+  <!-- Table header -->
+  <rect x="100" y="268" width="500" height="22" rx="4" fill="#1c2128" stroke="#30363d" stroke-width="0.5"/>
+  <text x="155" y="283" text-anchor="middle" fill="#8b949e" font-size="9">Runtime</text>
+  <line x1="210" y1="268" x2="210" y2="290" stroke="#30363d" stroke-width="0.5"/>
+  <text x="275" y="283" text-anchor="middle" fill="#8b949e" font-size="9">Planning</text>
+  <line x1="340" y1="268" x2="340" y2="290" stroke="#30363d" stroke-width="0.5"/>
+  <text x="405" y="283" text-anchor="middle" fill="#8b949e" font-size="9">Implementation</text>
+  <line x1="470" y1="268" x2="470" y2="290" stroke="#30363d" stroke-width="0.5"/>
+  <text x="535" y="283" text-anchor="middle" fill="#8b949e" font-size="9">Synthesis</text>
+  <line x1="560" y1="268" x2="560" y2="290" stroke="#30363d" stroke-width="0.5"/>
+  <text x="580" y="283" text-anchor="middle" fill="#8b949e" font-size="9">总分</text>
+
+  <!-- Row 1 -->
+  <rect x="100" y="290" width="500" height="20" rx="2" fill="#0d1117" stroke="#30363d" stroke-width="0.5"/>
+  <text x="155" y="304" text-anchor="middle" fill="#e6edf3" font-size="9">Claude Code</text>
+  <text x="275" y="304" text-anchor="middle" fill="#2ea043" font-size="9">0.85 ✅</text>
+  <text x="405" y="304" text-anchor="middle" fill="#2ea043" font-size="9">0.90 ✅</text>
+  <text x="535" y="304" text-anchor="middle" fill="#2ea043" font-size="9">0.85 ✅</text>
+  <text x="580" y="304" text-anchor="middle" fill="#e3b341" font-size="9">0.87</text>
+
+  <!-- Row 2 -->
+  <rect x="100" y="296" width="500" height="0" stroke="none"/>
+  <text x="155" y="0" text-anchor="middle" fill="none"/>
+</svg>
