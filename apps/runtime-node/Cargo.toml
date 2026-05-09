@@ -1,0 +1,21 @@
+[package]
+name = "runtime-node"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+chrono.workspace = true
+clap.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+uuid.workspace = true
+platform-a2a = { path = "../../crates/platform-a2a" }
+platform-core = { path = "../../crates/platform-core" }
+platform-domain = { path = "../../crates/platform-domain" }
