@@ -45,7 +45,12 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     require_platform_api_token()?;
 
-    let registry = RuntimeRegistry::new();
+    let run_root = std::env::current_dir()
+        .unwrap_or_default()
+        .join("target")
+        .join("platform-runtime");
+
+    let registry = RuntimeRegistry::with_history_path(run_root.join("capability-history.json"));
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(10))
@@ -58,10 +63,6 @@ async fn main() -> Result<()> {
     orchestrator.add_observer(dashboard_state.clone());
 
     // Agent manager for user-configured AI agents
-    let run_root = std::env::current_dir()
-        .unwrap_or_default()
-        .join("target")
-        .join("platform-runtime");
     let agent_manager = agent_manager::AgentManager::new(
         run_root,
         format!("http://{}", args.bind),
@@ -223,7 +224,18 @@ async fn submit_workflow(
             Json(json!({ "error": "constraint count must be <= 50" })),
         );
     }
-    let result = state.orchestrator.submit(payload).await;
+    let orchestrator = state.orchestrator.clone();
+    let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let result = orchestrator.submit(payload).await;
+        let _ = result_tx.send(result);
+    });
+    let result = match result_rx.await {
+        Ok(result) => result,
+        Err(_) => Err(anyhow::anyhow!(
+            "workflow execution task ended before returning a result"
+        )),
+    };
     match result {
         Ok(record) => (StatusCode::OK, Json(json!(to_submission_response(record)))),
         Err(error) => (

@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-
 use anyhow::{Context, Result};
 use parking_lot::RwLock;
 use platform_core::RuntimeRegistry;
@@ -59,7 +58,20 @@ impl AgentManager {
     fn save(&self) {
         let path = self.agents_path();
         let guard = self.inner.read();
-        if let Ok(json) = serde_json::to_string_pretty(&*guard) {
+        let persisted: BTreeMap<String, AgentState> = guard
+            .iter()
+            .map(|(id, state)| {
+                (
+                    id.clone(),
+                    AgentState {
+                        config: redact_agent_secret(&state.config),
+                        pid: state.pid,
+                        status: state.status.clone(),
+                    },
+                )
+            })
+            .collect();
+        if let Ok(json) = serde_json::to_string_pretty(&persisted) {
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
@@ -96,16 +108,18 @@ impl AgentManager {
     // ── CRUD ────────────────────────────────────────────────
 
     pub fn list_agents(&self) -> Vec<AgentConfig> {
+        self.refresh_runtime_statuses();
         self.inner
             .read()
             .values()
-            .map(|s| s.config.clone())
+            .map(|s| redact_agent_secret(&s.config))
             .collect()
     }
 
     #[allow(dead_code)]
     pub fn get_agent(&self, id: &str) -> Option<AgentConfig> {
-        self.inner.read().get(id).map(|s| s.config.clone())
+        self.refresh_runtime_statuses();
+        self.inner.read().get(id).map(|s| redact_agent_secret(&s.config))
     }
 
     pub fn add_agent(&self, config: AgentConfig) -> Result<AgentConfig> {
@@ -121,7 +135,7 @@ impl AgentManager {
         guard.insert(config.id.clone(), state);
         drop(guard);
         self.save();
-        Ok(config)
+        Ok(redact_agent_secret(&config))
     }
 
     pub fn update_agent(&self, id: &str, config: AgentConfig) -> Result<AgentConfig> {
@@ -132,10 +146,11 @@ impl AgentManager {
         if entry.status == "running" {
             anyhow::bail!("cannot update a running agent; stop it first");
         }
-        entry.config = config.clone();
+        let merged = merge_agent_config(&entry.config, config);
+        entry.config = merged.clone();
         drop(guard);
         self.save();
-        Ok(config)
+        Ok(redact_agent_secret(&merged))
     }
 
     pub fn remove_agent(&self, id: &str) -> Result<()> {
@@ -153,6 +168,7 @@ impl AgentManager {
     // ── Process Lifecycle ───────────────────────────────────
 
     pub fn agent_status(&self, id: &str) -> String {
+        self.refresh_runtime_statuses();
         self.inner
             .read()
             .get(id)
@@ -171,7 +187,7 @@ impl AgentManager {
             }
             state.config.clone()
         };
-        let child = spawn_agent_adapter(&config, &self.control_plane_url)
+        let mut child = spawn_agent_adapter(&config, &self.control_plane_url)
             .context("failed to spawn agent-adapter process")?;
         let pid = child
             .id()
@@ -187,9 +203,11 @@ impl AgentManager {
         self.save();
         // Monitor the child process in background
         let inner = self.inner.clone();
+        let registry = self.registry.clone();
         let monitor_id = id.to_string();
         tokio::spawn(async move {
-            let result = child.wait_with_output().await;
+            let result = child.wait().await;
+            registry.remove(&monitor_id);
             {
                 let mut guard = inner.write();
                 if let Some(state) = guard.get_mut(&monitor_id) {
@@ -198,10 +216,9 @@ impl AgentManager {
                 }
             }
             match result {
-                Ok(output) => {
-                    if !output.status.success() {
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        warn!("agent {monitor_id} exited with {}: {stderr}", output.status);
+                Ok(status) => {
+                    if !status.success() {
+                        warn!("agent {monitor_id} exited with {status}");
                     } else {
                         info!("agent {monitor_id} exited cleanly");
                     }
@@ -265,6 +282,7 @@ impl AgentManager {
                 nix::sys::signal::Signal::SIGTERM,
             );
         }
+        self.registry.remove(id);
         self.save();
         info!("stopped agent {id} (pid {pid})");
         Ok(())
@@ -281,6 +299,7 @@ impl AgentManager {
                 let alive = check_pid_alive(pid);
                 if !alive {
                     info!("reaped zombie agent {id} (pid {pid})");
+                    self.registry.remove(id);
                     state.pid = None;
                     state.status = "stopped".into();
                 }
@@ -290,6 +309,7 @@ impl AgentManager {
 
     /// Return status map for the API
     pub fn agent_statuses(&self) -> BTreeMap<String, serde_json::Value> {
+        self.refresh_runtime_statuses();
         let guard = self.inner.read();
         guard
             .iter()
@@ -312,6 +332,35 @@ impl AgentManager {
             .map(|s| s.config.id.clone())
             .collect();
         detect_system_agents(existing)
+    }
+
+    fn refresh_runtime_statuses(&self) {
+        let registered_ids = self
+            .registry
+            .list()
+            .into_iter()
+            .map(|runtime| runtime.runtime_id)
+            .collect::<std::collections::HashSet<_>>();
+
+        let mut changed = false;
+        {
+            let mut guard = self.inner.write();
+            for (id, state) in guard.iter_mut() {
+                if state.pid.is_some() && registered_ids.contains(id) && state.status != "running" {
+                    state.status = "running".into();
+                    changed = true;
+                } else if state.pid.is_none()
+                    && !registered_ids.contains(id)
+                    && matches!(state.status.as_str(), "running" | "starting" | "error")
+                {
+                    state.status = "stopped".into();
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.save();
+        }
     }
 }
 
@@ -511,8 +560,10 @@ fn spawn_agent_adapter(config: &AgentConfig, control_plane_url: &str) -> Result<
         "--auto-register",
     ])
     .kill_on_drop(true)
-    .stdout(std::process::Stdio::piped())
-    .stderr(std::process::Stdio::piped());
+    .stdout(std::process::Stdio::inherit())
+    .stderr(std::process::Stdio::inherit());
+
+    apply_backend_env(&mut cmd, config);
 
     let child = cmd
         .spawn()
@@ -535,9 +586,6 @@ fn build_backend_json(config: &AgentConfig) -> String {
             }
             if let Some(model) = &config.model {
                 map.insert("model".into(), model.clone().into());
-            }
-            if let Some(api_key) = &config.api_key {
-                map.insert("api_key".into(), api_key.clone().into());
             }
             serde_json::Value::Object(map).to_string()
         }
@@ -575,6 +623,33 @@ fn build_backend_json(config: &AgentConfig) -> String {
             .to_string()
         }
     }
+}
+
+fn apply_backend_env(cmd: &mut Command, config: &AgentConfig) {
+    if config.backend_type == "openai"
+        && let Some(api_key) = config.api_key.as_deref().map(str::trim)
+        && !api_key.is_empty()
+    {
+        cmd.env("OPENAI_API_KEY", api_key);
+    }
+}
+
+fn redact_agent_secret(config: &AgentConfig) -> AgentConfig {
+    let mut sanitized = config.clone();
+    sanitized.api_key = None;
+    sanitized
+}
+
+fn merge_agent_config(existing: &AgentConfig, mut incoming: AgentConfig) -> AgentConfig {
+    let keep_existing_secret = incoming
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .is_none_or(str::is_empty);
+    if keep_existing_secret {
+        incoming.api_key = existing.api_key.clone();
+    }
+    incoming
 }
 
 fn normalize_stdio_args(command: &str, configured_args: &[String]) -> (Vec<String>, bool) {
@@ -659,5 +734,115 @@ fn check_pid_alive(pid: u32) -> bool {
     {
         let _ = pid;
         true // fallback: assume alive
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use platform_domain::{HealthStatus, Metadata, RuntimeDescriptor, RuntimeHealth, RuntimeLoad};
+
+    use super::*;
+
+    fn openai_config() -> AgentConfig {
+        AgentConfig {
+            id: "agent-1".to_string(),
+            name: "Agent 1".to_string(),
+            backend_type: "openai".to_string(),
+            base_url: Some("http://localhost:11434/v1".to_string()),
+            model: Some("llama3".to_string()),
+            api_key: Some("secret-token".to_string()),
+            command: None,
+            args: vec![],
+            enabled: true,
+            auto_launch: false,
+        }
+    }
+
+    #[test]
+    fn backend_json_omits_api_key() {
+        let json = build_backend_json(&openai_config());
+
+        assert!(json.contains("\"type\":\"openai\""));
+        assert!(!json.contains("secret-token"));
+        assert!(!json.contains("api_key"));
+    }
+
+    #[test]
+    fn save_redacts_api_keys_from_persistence() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time is monotonic")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("agent-manager-test-{unique}"));
+        let manager = AgentManager::new(
+            dir.clone(),
+            "http://127.0.0.1:9000".to_string(),
+            RuntimeRegistry::new(),
+        );
+
+        manager.add_agent(openai_config()).expect("agent added");
+
+        let data = std::fs::read_to_string(dir.join("agents.json")).expect("agents.json exists");
+        assert!(!data.contains("secret-token"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn update_preserves_existing_secret_when_payload_omits_it() {
+        let existing = openai_config();
+        let mut incoming = existing.clone();
+        incoming.model = Some("qwen2.5-coder".to_string());
+        incoming.api_key = None;
+
+        let merged = merge_agent_config(&existing, incoming);
+
+        assert_eq!(merged.api_key.as_deref(), Some("secret-token"));
+        assert_eq!(merged.model.as_deref(), Some("qwen2.5-coder"));
+    }
+
+    #[test]
+    fn late_runtime_registration_recovers_agent_status() {
+        let registry = RuntimeRegistry::new();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time is monotonic")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("agent-manager-status-test-{unique}"));
+        let manager = AgentManager::new(dir.clone(), "http://127.0.0.1:9000".to_string(), registry.clone());
+
+        manager.add_agent(openai_config()).expect("agent added");
+        {
+            let mut guard = manager.inner.write();
+            let state = guard.get_mut("agent-1").expect("agent state");
+            state.pid = Some(4242);
+            state.status = "error".to_string();
+        }
+
+        registry
+            .register(RuntimeDescriptor {
+                runtime_id: "agent-1".to_string(),
+                agent_id: "agent-1".to_string(),
+                display_name: "Agent 1".to_string(),
+                endpoint: "http://127.0.0.1:9201/a2a".to_string(),
+                profile: "openai".to_string(),
+                trust_tier: 2,
+                cost_per_task: 1.0,
+                capabilities: vec![],
+                health: RuntimeHealth {
+                    status: HealthStatus::Healthy,
+                    availability: 0.99,
+                    ..RuntimeHealth::default()
+                },
+                load: RuntimeLoad::default(),
+                metadata: Metadata::new(),
+            })
+            .expect("runtime registered");
+
+        assert_eq!(manager.agent_status("agent-1"), "running");
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -56,11 +56,14 @@ A Rust-first, capability-aware multi-agent orchestration platform built on the [
 ```
 最终得分 = 必需能力匹配 × 0.55
          + 偏好能力加分 × 0.20
+         + 历史质量奖励   × 0.25
          + 可用性奖励   × 0.25
          + 成本奖励     × 0.10
          - 负载惩罚     × 0.20
          - 队列惩罚     × 0.03
 ```
+
+历史质量奖励来自 Runtime 已注册能力上的成功率和延迟信号。每次阶段执行结束后，控制平面会把该次成功/失败与耗时回写到对应能力指标，后续调度会自动偏向近期更稳定、更低延迟的 Runtime。
 
 ### 3. Google A2A Agent 通信协议
 
@@ -77,6 +80,7 @@ A Rust-first, capability-aware multi-agent orchestration platform built on the [
 - **版本协商**：`A2A-Version: 1.0`
 - **上下文连续性**：`context_id` 贯穿工作流各阶段和 Runtime 间协作
 - **响应大小限制**：256 KiB 上限
+- **直接协作**：Execute / Revise 阶段可携带 `collaborators` 元数据，Runtime 在本地直接通过 `message/send` 咨询其他 Runtime，而不是回到控制平面中转
 
 ### 4. 支持第三方 AI 接入
 
@@ -110,20 +114,27 @@ A Rust-first, capability-aware multi-agent orchestration platform built on the [
 
 ### 5. 自动划分复杂任务并分配 Agent Runtime 执行
 
-工作流提交后，Orchestrator 自动进入三阶段管道执行流程：
+工作流提交后，Orchestrator 会先执行规划，再按计划自动拆解成多个执行步骤，并在综合前插入质量门：
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Plan      │ ──> │  Execute    │ ──> │  Synthesize │
-│  规划阶段    │     │  执行阶段   │     │  综合阶段   │
-└─────────────┘     └─────────────┘     └─────────────┘
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌────────────────────┐
+│   Plan      │ ──> │  Execute    │ ──> │   Review    │ ──> │     Synthesize     │
+│  规划阶段    │     │  执行阶段   │     │  审查阶段   │     │      综合阶段      │
+└─────────────┘     └─────────────┘     └─────────────┘     └────────────────────┘
+                                         │
+                                         └──── revision required ────> Revise -> Review
 ```
 
 1. **Plan（规划）** — 将目标发送给得分最高的 Planner Runtime，生成执行计划
-2. **Execute（执行）** — 将计划 + 目标发送给 Executor，产生工作成果
-3. **Synthesize（综合）** — 汇总目标、计划和执行结果，生成最终报告
+2. **Execute（执行）** — 控制平面从 Plan 中解析出多个步骤，逐步调度 Executor；每步可携带上游 Artifact，并按能力要求附带 1~2 个协作者 Runtime
+3. **Direct A2A Consult（直接协作）** — Execute / Revise Runtime 可直接向协作者发起 `consult` 消息，收集建议后再继续本步骤产出
+4. **Review（审查）** — 使用 Reviewer Runtime 对聚合后的执行结果做质量门判断，要求返回 `APPROVED` 或 `REVISION_REQUIRED`
+5. **Revise（修订，可选）** — 如果审查要求返工，调度 Revision Runtime 按反馈修订一次，并再次进入审查
+6. **Synthesize（综合）** — 汇总目标、计划和经审查通过的执行结果，生成最终报告
 
-每个阶段默认 60 秒超时，整体工作流 300 秒超时。执行状态通过 SSE（Server-Sent Events）实时推送到 Dashboard。
+Review 阶段会优先选择与 Execute / Revise 不同的 Runtime；如果当前部署中只有一个满足条件的 Runtime，则会回退到同一 Runtime 完成自审，避免单节点部署在审查阶段卡死。
+
+每个阶段默认 60 秒超时，整体工作流 300 秒超时。工作流在控制平面内持续执行，不依赖单次提交请求保持连接；即使提交方超时或断开连接，仍可通过 Dashboard、`/workflows` 或 SSE（Server-Sent Events）继续跟踪结果。
 
 ---
 
@@ -153,6 +164,7 @@ open-agents-cowork-platform/
 - 管理 Runtime 注册与心跳（每 5 秒）
 - 运行能力感知调度器（评分矩阵）
 - 编排三阶段工作流执行
+- 在提交请求返回后继续执行长工作流，并通过 `/workflows` 与 SSE 暴露进度
 - Agent 配置持久化（`target/platform-runtime/agents.json`）
 - Launch/stop agent-adapter 子进程
 
@@ -166,6 +178,7 @@ open-agents-cowork-platform/
 - 单页应用（SPA），Hash 路由
 - 四个页面：Dashboard（提交工作流）、Workflows（查看列表与详情）、Runtimes（监控运行节点）、Settings（Agent 配置管理）
 - SSE 实时推送事件刷新页面
+- 显示从 `submitted` 到各阶段完成/失败的完整工作流时间线
 - 支持三语界面：中文、English、Español
 
 ---
@@ -214,6 +227,8 @@ cargo run -p control-plane -- --bind 127.0.0.1:9000
 
 # 4. 在 Settings 页面添加并启动 Agent
 ```
+
+如果只启动了一个 Runtime，平台仍可完成 Review 阶段，但会在审查时回退到同一 Runtime。多 Runtime 部署下，Review 会优先交给独立 Reviewer。
 
 ### Stop · 停止 · Detener
 

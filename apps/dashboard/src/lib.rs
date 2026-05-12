@@ -118,6 +118,16 @@ impl DashboardState {
 
 #[async_trait::async_trait]
 impl platform_core::WorkflowObserver for DashboardState {
+    async fn on_workflow_submitted(&self, workflow_id: &str) {
+        self.push_event(
+            DashboardEventType::Submitted,
+            workflow_id.to_string(),
+            None,
+            None,
+            format!("Workflow '{workflow_id}' submitted"),
+        );
+    }
+
     async fn on_stage_start(&self, workflow_id: &str, stage: &str, runtime_id: &str) {
         self.push_event(
             DashboardEventType::StageStarted,

@@ -36,8 +36,9 @@ enum Command {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     require_platform_api_token()?;
+    let request_timeout = std::time::Duration::from_secs(330);
     let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(request_timeout)
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()?;
 

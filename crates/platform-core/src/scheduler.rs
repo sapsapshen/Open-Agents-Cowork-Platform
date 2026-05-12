@@ -75,6 +75,9 @@ impl Scheduler {
 
         let mut reasons = Vec::new();
         let mut required_score = 0.0;
+        let mut success_signal_total = 0.0;
+        let mut latency_signal_total = 0.0;
+        let mut matched_required_capabilities = 0.0;
         for requirement in &requirements.required_capabilities {
             match runtime
                 .capabilities
@@ -96,18 +99,22 @@ impl Scheduler {
                         return None;
                     }
                     required_score += capability.level * requirement.weight.max(0.1);
+                    success_signal_total += capability.success_rate;
+                    latency_signal_total += latency_signal(capability.median_latency_ms);
+                    matched_required_capabilities += 1.0;
                     reasons.push(format!(
                         "required capability {} matched at {:.2}",
                         requirement.capability, capability.level
                     ));
                 }
                 None => {
-                    // Runtime doesn't advertise this capability. If it has NO capabilities
-                    // at all, treat it as a generic bridge that can handle any stage.
-                    // Only filter out runtimes that DO have capabilities but lack this one.
-                    if !runtime.capabilities.is_empty() {
+                    if !supports_generic_runtime(runtime) {
                         return None;
                     }
+                    reasons.push(format!(
+                        "required capability {} satisfied by explicit generic runtime fallback",
+                        requirement.capability
+                    ));
                 }
             }
         }
@@ -131,9 +138,26 @@ impl Scheduler {
         let queue_penalty = runtime.load.queued_tasks as f32 * 0.03;
         let availability_bonus = runtime.health.availability * 0.25;
         let cost_bonus = (1.0 / runtime.cost_per_task.max(1.0)) * 0.10;
+        let quality_bonus = if matched_required_capabilities > 0.0 {
+            (success_signal_total / matched_required_capabilities) * 0.15
+                + (latency_signal_total / matched_required_capabilities) * 0.10
+        } else {
+            0.0
+        };
+
+        if quality_bonus > 0.0 {
+            reasons.push(format!(
+                "quality history bonus {:.3} from success rate and latency",
+                quality_bonus
+            ));
+        }
 
         let score =
-            required_score * 0.55 + preferred_score * 0.20 + availability_bonus + cost_bonus
+            required_score * 0.55
+                + preferred_score * 0.20
+                + availability_bonus
+                + cost_bonus
+                + quality_bonus
                 - load_penalty * 0.20
                 - queue_penalty;
 
@@ -146,6 +170,18 @@ impl Scheduler {
             },
         })
     }
+}
+
+fn latency_signal(latency_ms: u32) -> f32 {
+    1.0 / (1.0 + (latency_ms.max(1) as f32 / 1000.0))
+}
+
+fn supports_generic_runtime(runtime: &RuntimeDescriptor) -> bool {
+    runtime.capabilities.is_empty()
+        && runtime
+            .metadata
+            .get("generic_runtime")
+            .is_some_and(|value| value.eq_ignore_ascii_case("true"))
 }
 
 #[cfg(test)]
@@ -185,6 +221,32 @@ mod tests {
         }
     }
 
+    fn generic_runtime(id: &str, explicit_opt_in: bool) -> RuntimeDescriptor {
+        let mut runtime = RuntimeDescriptor {
+            runtime_id: id.to_string(),
+            agent_id: format!("agent-{id}"),
+            display_name: id.to_string(),
+            endpoint: format!("http://{id}.example/a2a"),
+            profile: "bridge".to_string(),
+            trust_tier: 2,
+            cost_per_task: 1.0,
+            capabilities: vec![],
+            health: RuntimeHealth {
+                status: platform_domain::HealthStatus::Healthy,
+                availability: 0.99,
+                last_heartbeat_at: Utc::now(),
+            },
+            load: RuntimeLoad::default(),
+            metadata: Default::default(),
+        };
+        if explicit_opt_in {
+            runtime
+                .metadata
+                .insert("generic_runtime".to_string(), "true".to_string());
+        }
+        runtime
+    }
+
     #[test]
     fn scheduler_prefers_highest_matching_runtime() {
         let scheduler = Scheduler;
@@ -210,5 +272,80 @@ mod tests {
             .expect("expected a runtime");
 
         assert_eq!(selected.runtime.runtime_id, "r2");
+    }
+
+    #[test]
+    fn scheduler_rejects_empty_capability_runtime_without_generic_opt_in() {
+        let scheduler = Scheduler;
+        let requirements = TaskRequirements {
+            required_capabilities: vec![CapabilityRequirement {
+                capability: "implementation".to_string(),
+                min_level: 0.5,
+                weight: 1.0,
+            }],
+            preferred_capabilities: vec![],
+            max_latency_ms: None,
+            min_success_rate: None,
+            max_cost: None,
+            trust_tier: Some(1),
+        };
+
+        let selected = scheduler.select_best(&[generic_runtime("bridge", false)], &requirements, &[]);
+
+        assert!(selected.is_none());
+    }
+
+    #[test]
+    fn scheduler_allows_explicit_generic_runtime_fallback() {
+        let scheduler = Scheduler;
+        let requirements = TaskRequirements {
+            required_capabilities: vec![CapabilityRequirement {
+                capability: "implementation".to_string(),
+                min_level: 0.5,
+                weight: 1.0,
+            }],
+            preferred_capabilities: vec![],
+            max_latency_ms: None,
+            min_success_rate: None,
+            max_cost: None,
+            trust_tier: Some(1),
+        };
+
+        let selected = scheduler
+            .select_best(&[generic_runtime("bridge", true)], &requirements, &[])
+            .expect("expected generic runtime fallback");
+
+        assert_eq!(selected.runtime.runtime_id, "bridge");
+    }
+
+    #[test]
+    fn scheduler_prefers_stronger_runtime_history_when_levels_tie() {
+        let scheduler = Scheduler;
+        let requirements = TaskRequirements {
+            required_capabilities: vec![CapabilityRequirement {
+                capability: "implementation".to_string(),
+                min_level: 0.8,
+                weight: 1.0,
+            }],
+            preferred_capabilities: vec![],
+            max_latency_ms: None,
+            min_success_rate: None,
+            max_cost: None,
+            trust_tier: Some(1),
+        };
+
+        let mut fast_reliable = runtime("fast", "implementation", 0.9);
+        fast_reliable.capabilities[0].success_rate = 0.99;
+        fast_reliable.capabilities[0].median_latency_ms = 120;
+
+        let mut slow_unreliable = runtime("slow", "implementation", 0.9);
+        slow_unreliable.capabilities[0].success_rate = 0.65;
+        slow_unreliable.capabilities[0].median_latency_ms = 2_500;
+
+        let selected = scheduler
+            .select_best(&[slow_unreliable, fast_reliable], &requirements, &[])
+            .expect("expected a runtime");
+
+        assert_eq!(selected.runtime.runtime_id, "fast");
     }
 }

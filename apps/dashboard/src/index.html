@@ -351,7 +351,7 @@
   <!-- ── Dashboard ── -->
   <div class="page active" id="page-dashboard">
     <div class="page-desc" data-i18n="descDashboard">
-      <strong>Dashboard</strong> — Submit a workflow objective to the platform. Agents are assigned to stages based on their registered capabilities. The workflow progresses through <strong>Plan</strong>, <strong>Execute</strong>, and <strong>Synthesize</strong> stages. Monitor real-time results below.
+      <strong>Dashboard</strong> — Submit a workflow objective to the platform. Agents are assigned to stages based on their registered capabilities. The workflow progresses through <strong>Plan</strong>, <strong>Execute</strong>, <strong>Review</strong>, optional <strong>Revise</strong>, and <strong>Synthesize</strong>. Submitted workflows keep running on the control plane even if the submit request times out; monitor real-time results below.
     </div>
     <div class="card">
       <h2 data-i18n="submitTitle">Submit Workflow</h2>
@@ -378,7 +378,7 @@
   <!-- ── Workflows ── -->
   <div class="page" id="page-workflows">
     <div class="page-desc" data-i18n="descWorkflows">
-      <strong>Workflows</strong> — View all submitted workflows. Each workflow is a multi-stage execution: a <strong>Plan</strong> is created, the plan is <strong>Executed</strong> by a capable runtime, and results are <strong>Synthesized</strong> into a final report. Click any workflow to see its detailed execution timeline and per-stage outputs.
+      <strong>Workflows</strong> — View all submitted workflows. Each workflow is a multi-stage execution: a <strong>Plan</strong> is created, the plan is <strong>Executed</strong>, the result is <strong>Reviewed</strong>, optionally <strong>Revised</strong>, and then <strong>Synthesized</strong> into a final report. Review prefers an independent runtime, but single-runtime deployments fall back to the same runtime so the workflow can still finish.
     </div>
     <h2 style="margin-bottom:16px;" data-i18n="allWorkflowsTitle">All Workflows</h2>
     <div id="all-workflows-list"><div class="loading"><span class="spinner"></span> <span data-i18n="loading">Loading...</span></div></div>
@@ -402,7 +402,7 @@
   <!-- ── Settings ── -->
   <div class="page" id="page-settings">
     <div class="page-desc" data-i18n="descSettings">
-      <strong>Settings</strong> — Configure AI agents that the platform can use. Add OpenAI-compatible endpoints (e.g., Ollama, OpenAI API) or custom CLI agents. Agents must be launched before they can process workflow tasks.
+      <strong>Settings</strong> — Configure AI agents that the platform can use. Add OpenAI-compatible endpoints (e.g., Ollama, OpenAI API) or custom CLI agents. Agents must be launched before they can process workflow tasks. In multi-runtime setups the platform prefers a separate reviewer; in single-runtime setups it can fall back to the same launched agent for Review.
     </div>
     <div class="card">
       <h2 data-i18n="settingsAgentsTitle">AI Agents</h2>
@@ -486,10 +486,10 @@ const I18N = {
     navSettings: 'Settings',
     sseConnected: 'Connected',
     sseDisconnected: 'Disconnected',
-    descDashboard: 'Dashboard — Submit a workflow objective to the platform. Agents are assigned to stages based on their registered capabilities. The workflow progresses through Plan, Execute, and Synthesize stages. Monitor real-time results below.',
-    descWorkflows: 'Workflows — View all submitted workflows. Each workflow is a multi-stage execution: a Plan is created, the plan is Executed by a capable runtime, and results are Synthesized into a final report. Click any workflow to see its detailed execution timeline and per-stage outputs.',
+    descDashboard: 'Dashboard — Submit a workflow objective to the platform. Agents are assigned to stages based on their registered capabilities. The workflow progresses through Plan, Execute, Review, optional Revise, and Synthesize. Submitted workflows keep running on the control plane even if the submit request times out; monitor real-time results below.',
+    descWorkflows: 'Workflows — View all submitted workflows. Each workflow is a multi-stage execution: a Plan is created, the plan is Executed, the result is Reviewed, optionally Revised, and then Synthesized into a final report. Review prefers an independent runtime, but single-runtime deployments fall back to the same runtime so the workflow can still finish.',
     descRuntimes: 'Runtimes — Connected agent runtime nodes that process workflow stages. Each runtime registers its own capabilities (skills it can perform). The scheduler matches workflow stages to the most capable runtime based on capability levels, availability, and cost. Runtimes communicate via the A2A protocol (Agent-to-Agent). Runtimes are auto-discovered when they register with the platform. Known agent types include: Planner (decomposes tasks), Executor (delivers solutions), Synthesizer (generates reports), Reviewer (validates output), and general-purpose agents.',
-    descSettings: 'Settings — Configure AI agents that the platform can use. Add OpenAI-compatible endpoints (e.g., Ollama, OpenAI API) or custom CLI agents. Agents must be launched before they can process workflow tasks.',
+    descSettings: 'Settings — Configure AI agents that the platform can use. Add OpenAI-compatible endpoints (e.g., Ollama, OpenAI API) or custom CLI agents. Agents must be launched before they can process workflow tasks. In multi-runtime setups the platform prefers a separate reviewer; in single-runtime setups it can fall back to the same launched agent for Review.',
     settingsAgentsTitle: 'AI Agents',
     addAgentBtn: 'Add Agent',
     addAgentTitle: 'Add Agent',
@@ -605,10 +605,10 @@ const I18N = {
     navSettings: '设置',
     sseConnected: '已连接',
     sseDisconnected: '已断开',
-    descDashboard: '控制台 —— 向平台提交工作流目标。代理将根据其注册的能力被分配到各阶段。工作流经过”计划”、”执行”和”综合”三个阶段。下方实时显示执行结果。',
-    descWorkflows: '工作流 —— 查看所有已提交的工作流。每个工作流包含多个执行阶段：创建”计划”、由具备相应能力的运行时”执行”计划、最后”综合”结果生成最终报告。点击任一工作流可查看详细的执行时间线和各阶段输出。',
+    descDashboard: '控制台 —— 向平台提交工作流目标。代理将根据其注册的能力被分配到各阶段。工作流经过“计划”、“执行”、“审查”、可选“修订”和“综合”阶段。即使提交请求超时，工作流仍会在控制平面继续运行；下方可实时查看结果。',
+    descWorkflows: '工作流 —— 查看所有已提交的工作流。每个工作流包含多个执行阶段：创建“计划”、执行计划、审查结果、必要时修订，最后综合为最终报告。平台会优先选择独立 Reviewer；如果当前只有一个可用 Runtime，则会回退到同一 Runtime 完成审查。点击任一工作流可查看详细时间线和各阶段输出。',
     descRuntimes: '运行时 —— 连接到平台的代理运行时节点，用于处理工作流各阶段。每个运行时自行注册其能力（可执行的技能）。调度器根据能力等级、可用性和成本将工作流阶段匹配到最合适的运行时。运行时之间通过 A2A 协议进行通信。运行时可通过向平台注册实现自动发现。已知的代理类型包括：规划器（分解任务）、执行器（交付解决方案）、综合器（生成报告）、审查器（验证输出）以及通用代理。',
-    descSettings: '设置 —— 配置平台可使用的 AI 代理。添加 OpenAI 兼容端点（如 Ollama、OpenAI API）或自定义 CLI 代理。代理必须先启动才能处理工作流任务。',
+    descSettings: '设置 —— 配置平台可使用的 AI 代理。添加 OpenAI 兼容端点（如 Ollama、OpenAI API）或自定义 CLI 代理。代理必须先启动才能处理工作流任务。多 Runtime 部署会优先使用独立 Reviewer；单 Runtime 部署则可回退到同一已启动代理完成审查。',
     settingsAgentsTitle: 'AI 代理',
     addAgentBtn: '添加代理',
     addAgentTitle: '添加代理',
@@ -723,10 +723,10 @@ const I18N = {
     navSettings: 'Configuración',
     sseConnected: 'Conectado',
     sseDisconnected: 'Desconectado',
-    descDashboard: 'Panel — Envíe un objetivo de flujo de trabajo a la plataforma. Los agentes se asignan a las etapas según sus capacidades registradas. El flujo avanza por las etapas Planificar, Ejecutar y Sintetizar. Supervise los resultados en tiempo real.',
-    descWorkflows: 'Flujos — Vea todos los flujos de trabajo enviados. Cada flujo es una ejecución multi-etapa: se crea un Plan, un ejecutor capaz lo Ejecuta, y los resultados se Sintetizan en un informe final. Haga clic en cualquier flujo para ver su línea de tiempo detallada y las salidas por etapa.',
+    descDashboard: 'Panel — Envíe un objetivo de flujo de trabajo a la plataforma. Los agentes se asignan a las etapas según sus capacidades registradas. El flujo avanza por Planificar, Ejecutar, Revisar, Revisar de nuevo si hace falta y Sintetizar. Los flujos enviados siguen ejecutándose en el plano de control aunque la solicitud inicial expire; supervise los resultados en tiempo real aquí.',
+    descWorkflows: 'Flujos — Vea todos los flujos de trabajo enviados. Cada flujo es una ejecución multi-etapa: se crea un Plan, se Ejecuta, el resultado se Revisa, puede Revisarse de nuevo con correcciones, y luego se Sintetiza en un informe final. La revisión prefiere un runtime independiente, pero en despliegues con un solo runtime puede volver al mismo runtime para terminar el flujo.',
     descRuntimes: 'Ejecutores — Nodos de ejecutores de agentes conectados que procesan las etapas del flujo de trabajo. Cada ejecutor registra sus propias capacidades. El planificador empareja las etapas con el ejecutor más capaz según niveles de capacidad, disponibilidad y costo. Los ejecutores se comunican mediante el protocolo A2A. Los ejecutores se autodescubren al registrarse en la plataforma. Tipos de agente conocidos: Planificador (descompone tareas), Ejecutor (entrega soluciones), Sintetizador (genera informes), Revisor (valida resultados) y agentes de propósito general.',
-    descSettings: 'Configuración — Configure los agentes de IA que la plataforma puede usar. Añada endpoints compatibles con OpenAI (ej. Ollama, API de OpenAI) o agentes CLI personalizados. Los agentes deben iniciarse antes de que puedan procesar tareas del flujo de trabajo.',
+    descSettings: 'Configuración — Configure los agentes de IA que la plataforma puede usar. Añada endpoints compatibles con OpenAI (ej. Ollama, API de OpenAI) o agentes CLI personalizados. Los agentes deben iniciarse antes de procesar tareas del flujo. En despliegues con varios runtimes se prefiere un revisor separado; con un solo runtime la revisión puede volver al mismo agente iniciado.',
     settingsAgentsTitle: 'Agentes de IA',
     addAgentBtn: 'Añadir Agente',
     addAgentTitle: 'Añadir Agente',

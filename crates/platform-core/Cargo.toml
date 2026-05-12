@@ -16,3 +16,6 @@ tracing.workspace = true
 uuid.workspace = true
 platform-a2a = { path = "../platform-a2a" }
 platform-domain = { path = "../platform-domain" }
+
+[dev-dependencies]
+axum.workspace = true

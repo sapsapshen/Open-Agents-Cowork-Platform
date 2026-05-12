@@ -992,6 +992,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "axum",
  "chrono",
  "parking_lot",
  "platform-a2a",
