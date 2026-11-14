@@ -41,7 +41,13 @@ fi
 # ── 2. Port-force-kill fallback ─────────────────────────
 orphan_killed=0
 for port in "${RUNTIME_PORTS[@]}"; do
-  pids="$(lsof -ti "tcp:$port" 2>/dev/null || true)"
+  if command -v lsof >/dev/null 2>&1; then
+    pids="$(lsof -ti "tcp:$port" 2>/dev/null || true)"
+  elif command -v ss >/dev/null 2>&1; then
+    pids="$(ss -lptn "sport = :$port" 2>/dev/null | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | sort -u)"
+  else
+    pids=""
+  fi
   if [ -n "$pids" ]; then
     while IFS= read -r pid; do
       # Use non-empty trimmed PID

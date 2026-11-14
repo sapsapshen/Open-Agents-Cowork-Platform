@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use axum::{
     Router,
     extract::{Extension, Path as AxumPath},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{
         Html, IntoResponse, Sse,
         sse::{Event, KeepAlive},
@@ -203,9 +203,10 @@ async fn events_since(
 }
 
 async fn events_sse(
+    headers: HeaderMap,
     Extension(dashboard): Extension<std::sync::Arc<DashboardState>>,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
-    let existing = dashboard.events_since(0);
+    let existing = dashboard.events_since(last_event_seq(&headers));
     let rx = dashboard.subscribe();
 
     // Existing events → stream of SSE events
@@ -241,4 +242,52 @@ async fn events_sse(
     });
 
     Sse::new(existing_stream.chain(live_stream)).keep_alive(KeepAlive::default())
+}
+
+fn last_event_seq(headers: &HeaderMap) -> usize {
+    headers
+        .get("last-event-id")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DashboardEventType, DashboardState, last_event_seq};
+    use axum::http::{HeaderMap, HeaderValue};
+
+    #[test]
+    fn events_since_returns_only_newer_sequences() {
+        let state = DashboardState::new(10);
+        state.push_event(
+            DashboardEventType::Submitted,
+            "wf-1".to_string(),
+            None,
+            None,
+            "submitted".to_string(),
+        );
+        state.push_event(
+            DashboardEventType::WorkflowCompleted,
+            "wf-1".to_string(),
+            None,
+            None,
+            "done".to_string(),
+        );
+        let all = state.events_since(0);
+        assert_eq!(all.len(), 2);
+        let newer = state.events_since(all[0].seq);
+        assert_eq!(newer.len(), 1);
+        assert_eq!(newer[0].message, "done");
+    }
+
+    #[test]
+    fn last_event_header_defaults_to_zero() {
+        let mut headers = HeaderMap::new();
+        assert_eq!(last_event_seq(&headers), 0);
+        headers.insert("last-event-id", HeaderValue::from_static("4"));
+        assert_eq!(last_event_seq(&headers), 4);
+        headers.insert("last-event-id", HeaderValue::from_static("nope"));
+        assert_eq!(last_event_seq(&headers), 0);
+    }
 }

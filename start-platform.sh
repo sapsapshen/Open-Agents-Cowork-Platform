@@ -14,9 +14,22 @@ fail()  { printf "\r  [\033[0;31mFAIL\033[0m] %s\n" "$*"; exit 1; }
 
 # ── helpers ──────────────────────────────────────────────
 
+port_pids() {
+  local port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -ti "tcp:${port}" 2>/dev/null || true
+    return
+  fi
+  if command -v ss >/dev/null 2>&1; then
+    ss -lptn "sport = :${port}" 2>/dev/null | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | sort -u
+    return
+  fi
+  true
+}
+
 kill_platform_ports() {
   local pids
-  pids="$(lsof -ti "tcp:$CONTROL_PLANE_PORT" 2>/dev/null || true)"
+  pids="$(port_pids "$CONTROL_PLANE_PORT")"
   if [ -n "$pids" ]; then
     # shellcheck disable=SC2086
     kill $pids 2>/dev/null || true

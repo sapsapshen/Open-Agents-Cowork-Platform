@@ -5,6 +5,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
+    time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow};
@@ -18,6 +19,8 @@ pub const METHOD_AGENT_GET_CARD: &str = "agent/getCard";
 pub const METHOD_MESSAGE_SEND: &str = "message/send";
 pub const METHOD_TASKS_GET: &str = "tasks/get";
 pub const PLATFORM_TOKEN_HEADER: &str = "x-platform-token";
+/// Upper bound for one JSON-RPC call. Stage orchestration uses the same budget.
+pub const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AgentSkill {
@@ -191,7 +194,12 @@ impl A2aClient {
 
     pub async fn get_agent_card(&self, endpoint: &str) -> Result<AgentCard> {
         let response = self
-            .rpc(endpoint, METHOD_AGENT_GET_CARD, json!({}))
+            .rpc(
+                endpoint,
+                METHOD_AGENT_GET_CARD,
+                json!({}),
+                DEFAULT_RPC_TIMEOUT,
+            )
             .await
             .with_context(|| format!("fetching agent card from {endpoint}"))?;
         serde_json::from_value(response).context("deserializing agent card")
@@ -202,11 +210,22 @@ impl A2aClient {
         endpoint: &str,
         message: Message,
     ) -> Result<SendMessageResult> {
+        self.send_message_with_timeout(endpoint, message, DEFAULT_RPC_TIMEOUT)
+            .await
+    }
+
+    pub async fn send_message_with_timeout(
+        &self,
+        endpoint: &str,
+        message: Message,
+        timeout: Duration,
+    ) -> Result<SendMessageResult> {
         let response = self
             .rpc(
                 endpoint,
                 METHOD_MESSAGE_SEND,
                 serde_json::to_value(SendMessageParams { message })?,
+                timeout,
             )
             .await
             .with_context(|| format!("sending A2A message to {endpoint}"))?;
@@ -221,13 +240,20 @@ impl A2aClient {
                 serde_json::to_value(GetTaskParams {
                     id: task_id.to_string(),
                 })?,
+                DEFAULT_RPC_TIMEOUT,
             )
             .await
             .with_context(|| format!("getting A2A task {task_id} from {endpoint}"))?;
         serde_json::from_value(response).context("deserializing A2A task")
     }
 
-    async fn rpc(&self, endpoint: &str, method: &str, params: Value) -> Result<Value> {
+    async fn rpc(
+        &self,
+        endpoint: &str,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value> {
         validate_endpoint(endpoint)?;
         let payload = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -238,6 +264,7 @@ impl A2aClient {
         let response = self
             .http
             .post(endpoint)
+            .timeout(timeout)
             .header(PLATFORM_TOKEN_HEADER, require_platform_api_token()?)
             .header("A2A-Version", A2A_VERSION)
             .json(&payload)
@@ -293,18 +320,25 @@ pub fn validate_endpoint(endpoint: &str) -> Result<()> {
     let host = url
         .host_str()
         .ok_or_else(|| anyhow!("endpoint host is required"))?;
-    let allowed_hosts_raw =
-        env::var("PLATFORM_ALLOWED_HOSTS").unwrap_or_else(|_| "127.0.0.1,localhost".to_string());
+    let allowed_hosts_raw = env::var("PLATFORM_ALLOWED_HOSTS")
+        .unwrap_or_else(|_| "127.0.0.1,localhost,::1".to_string());
     let allowed_hosts = allowed_hosts_raw
         .split(',')
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>();
 
-    if !allowed_hosts
-        .iter()
-        .any(|allowed| allowed.eq_ignore_ascii_case(host))
-    {
+    let host = host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host);
+    if !allowed_hosts.iter().any(|allowed| {
+        let allowed = allowed
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+            .unwrap_or(allowed);
+        allowed.eq_ignore_ascii_case(host)
+    }) {
         return Err(anyhow!(
             "endpoint host {host} is not allowed; configure PLATFORM_ALLOWED_HOSTS to permit it"
         ));
@@ -327,5 +361,23 @@ pub fn text_message(
         context_id,
         parts: vec![MessagePart::Text { text: text.into() }],
         metadata: BTreeMap::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_endpoint;
+
+    #[test]
+    fn endpoint_validation_allows_loopback_and_rejects_other_hosts() {
+        validate_endpoint("http://127.0.0.1:9000/a2a").expect("ipv4 loopback");
+        validate_endpoint("http://localhost:9201/a2a").expect("localhost");
+        validate_endpoint("http://[::1]:9000/a2a").expect("ipv6 loopback");
+
+        let error = validate_endpoint("http://example.com/a2a").expect_err("public host");
+        assert!(error.to_string().contains("not allowed"));
+
+        let error = validate_endpoint("ftp://127.0.0.1/a2a").expect_err("scheme");
+        assert!(error.to_string().contains("unsupported endpoint scheme"));
     }
 }

@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
 
     let registry = RuntimeRegistry::with_history_path(run_root.join("capability-history.json"));
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(70))
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()?;
     let a2a_client = A2aClient::new(client.clone());
@@ -69,6 +69,8 @@ async fn main() -> Result<()> {
         registry.clone(),
     );
 
+    let auto_launch = agent_manager.clone();
+    let shutdown_agents = agent_manager.clone();
     let state = AppState {
         a2a_client,
         registry,
@@ -101,8 +103,47 @@ async fn main() -> Result<()> {
 
     info!("control-plane listening on {}", args.bind);
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
-    axum::serve(listener, app).await?;
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        auto_launch.launch_auto_agents().await;
+    });
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            shutdown_agents.stop_all();
+        })
+        .await?;
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(signal) => signal,
+                Err(error) => {
+                    tracing::warn!(%error, "failed to install SIGTERM handler");
+                    let _ = ctrl_c.await;
+                    return;
+                }
+            };
+        tokio::select! {
+            result = ctrl_c => {
+                if let Err(error) = result {
+                    tracing::warn!(%error, "ctrl-c listener failed");
+                }
+            }
+            _ = terminate.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        if let Err(error) = ctrl_c.await {
+            tracing::warn!(%error, "ctrl-c listener failed");
+        }
+    }
 }
 
 async fn health() -> impl IntoResponse {
@@ -212,17 +253,8 @@ async fn submit_workflow(
     if let Err(response) = require_token(&headers) {
         return response;
     }
-    if payload.objective.len() > 10_000 {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "objective length must be <= 10000" })),
-        );
-    }
-    if payload.constraints.len() > 50 {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "constraint count must be <= 50" })),
-        );
+    if let Err(error) = platform_domain::validate_workflow_request(&payload) {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": error })));
     }
     let orchestrator = state.orchestrator.clone();
     let (result_tx, result_rx) = tokio::sync::oneshot::channel();

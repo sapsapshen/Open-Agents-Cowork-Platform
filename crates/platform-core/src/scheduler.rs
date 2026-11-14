@@ -27,13 +27,7 @@ impl Scheduler {
             .filter_map(|runtime| self.score_runtime(runtime, requirements))
             .collect::<Vec<_>>();
 
-        scored.sort_by(|left, right| {
-            right
-                .decision
-                .score
-                .partial_cmp(&left.decision.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        scored.sort_by(|left, right| right.decision.score.total_cmp(&left.decision.score));
 
         scored.into_iter().next()
     }
@@ -152,14 +146,13 @@ impl Scheduler {
             ));
         }
 
-        let score =
-            required_score * 0.55
-                + preferred_score * 0.20
-                + availability_bonus
-                + cost_bonus
-                + quality_bonus
-                - load_penalty * 0.20
-                - queue_penalty;
+        let score = required_score * 0.55
+            + preferred_score * 0.20
+            + availability_bonus
+            + cost_bonus
+            + quality_bonus
+            - load_penalty * 0.20
+            - queue_penalty;
 
         Some(SchedulerCandidate {
             runtime: runtime.clone(),
@@ -290,7 +283,8 @@ mod tests {
             trust_tier: Some(1),
         };
 
-        let selected = scheduler.select_best(&[generic_runtime("bridge", false)], &requirements, &[]);
+        let selected =
+            scheduler.select_best(&[generic_runtime("bridge", false)], &requirements, &[]);
 
         assert!(selected.is_none());
     }
@@ -347,5 +341,30 @@ mod tests {
             .expect("expected a runtime");
 
         assert_eq!(selected.runtime.runtime_id, "fast");
+    }
+
+    #[test]
+    fn scheduler_skips_runtimes_with_a_stale_heartbeat() {
+        let scheduler = Scheduler;
+        let requirements = TaskRequirements {
+            required_capabilities: vec![CapabilityRequirement {
+                capability: "review".to_string(),
+                min_level: 0.5,
+                weight: 1.0,
+            }],
+            preferred_capabilities: vec![],
+            max_latency_ms: None,
+            min_success_rate: None,
+            max_cost: None,
+            trust_tier: Some(1),
+        };
+        let mut stale = runtime("stale", "review", 0.99);
+        stale.health.last_heartbeat_at = Utc::now() - chrono::Duration::seconds(30);
+
+        assert!(
+            scheduler
+                .select_best(&[stale], &requirements, &[])
+                .is_none()
+        );
     }
 }

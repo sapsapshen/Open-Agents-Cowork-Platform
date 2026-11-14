@@ -224,6 +224,10 @@ pub struct AgentConfig {
     pub base_url: Option<String>,
     pub model: Option<String>,
     pub api_key: Option<String>,
+    /// Environment variable to read the API key from at launch time.
+    /// The secret itself is not stored in `agents.json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_env: Option<String>,
     pub command: Option<String>,
     pub args: Vec<String>,
     pub enabled: bool,
@@ -235,7 +239,85 @@ impl AgentConfig {
         match self.backend_type.as_str() {
             "openai" => "OpenAI API",
             "stdio" => "CLI Process",
+            "claude_cli" => "Claude Code",
+            "codex_cli" => "Codex CLI",
             _ => "Unknown",
         }
+    }
+}
+
+pub const MAX_OBJECTIVE_CHARS: usize = 10_000;
+pub const MAX_CONSTRAINTS: usize = 50;
+pub const MAX_CONSTRAINT_CHARS: usize = 4_000;
+
+/// Reject workflow requests that cannot be scheduled safely.
+pub fn validate_workflow_request(request: &WorkflowRequest) -> Result<(), String> {
+    if request.objective.trim().is_empty() {
+        return Err("objective must not be empty".to_string());
+    }
+    if request.objective.chars().count() > MAX_OBJECTIVE_CHARS {
+        return Err(format!(
+            "objective length must be <= {MAX_OBJECTIVE_CHARS} characters"
+        ));
+    }
+    if request.constraints.len() > MAX_CONSTRAINTS {
+        return Err(format!("constraint count must be <= {MAX_CONSTRAINTS}"));
+    }
+    if let Some(constraint) = request
+        .constraints
+        .iter()
+        .find(|constraint| constraint.chars().count() > MAX_CONSTRAINT_CHARS)
+    {
+        return Err(format!(
+            "constraint length must be <= {MAX_CONSTRAINT_CHARS} characters (got {})",
+            constraint.chars().count()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workflow_request_rejects_blank_objective() {
+        let error = validate_workflow_request(&WorkflowRequest {
+            objective: "   ".to_string(),
+            constraints: vec![],
+            context_id: None,
+        })
+        .expect_err("blank objective");
+        assert!(error.contains("must not be empty"));
+    }
+
+    #[test]
+    fn workflow_request_accepts_a_normal_objective() {
+        validate_workflow_request(&WorkflowRequest {
+            objective: "Ship the workflow".to_string(),
+            constraints: vec!["rust-only".to_string()],
+            context_id: None,
+        })
+        .expect("valid request");
+    }
+
+    #[test]
+    fn display_type_names_known_backends() {
+        let mut config = AgentConfig {
+            id: "agent".to_string(),
+            name: "Agent".to_string(),
+            backend_type: "claude_cli".to_string(),
+            base_url: None,
+            model: None,
+            api_key: None,
+            api_key_env: None,
+            command: None,
+            args: vec![],
+            enabled: true,
+            auto_launch: false,
+        };
+        assert_eq!(config.display_type(), "Claude Code");
+        config.backend_type = "codex_cli".to_string();
+        assert_eq!(config.display_type(), "Codex CLI");
     }
 }
