@@ -320,11 +320,15 @@ async fn process_message(state: &AdapterState, message: Message) -> Result<SendM
         artifacts: vec![artifact],
     };
 
-    state.tasks.lock().await.insert(task.clone());
-    Ok(SendMessageResult {
+    let mut result = SendMessageResult {
         task: Some(task),
         message: None,
-    })
+    };
+    platform_a2a::constrain_send_result(&mut result);
+    if let Some(task) = result.task.clone() {
+        state.tasks.lock().await.insert(task);
+    }
+    Ok(result)
 }
 
 /// Dispatch a prompt to the configured backend and return the response text.

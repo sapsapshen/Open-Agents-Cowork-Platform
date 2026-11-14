@@ -21,6 +21,8 @@ pub const METHOD_TASKS_GET: &str = "tasks/get";
 pub const PLATFORM_TOKEN_HEADER: &str = "x-platform-token";
 /// Upper bound for one JSON-RPC call. Stage orchestration uses the same budget.
 pub const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(60);
+/// Hard cap checked by the A2A client on a JSON-RPC response body.
+pub const MAX_JSON_RPC_BODY_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AgentSkill {
@@ -283,7 +285,7 @@ impl A2aClient {
             .bytes()
             .await
             .context("reading JSON-RPC response body")?;
-        if body_bytes.len() > 256 * 1024 {
+        if body_bytes.len() > MAX_JSON_RPC_BODY_BYTES {
             return Err(anyhow!(
                 "JSON-RPC response from {endpoint} exceeded 256 KiB limit"
             ));
@@ -347,6 +349,83 @@ pub fn validate_endpoint(endpoint: &str) -> Result<()> {
     Ok(())
 }
 
+/// Drop bulky history metadata and shrink the largest text until a send
+/// result serializes under the JSON-RPC body cap.
+pub fn constrain_send_result(result: &mut SendMessageResult) {
+    if let Some(task) = result.task.as_mut() {
+        for message in &mut task.history {
+            message.metadata.clear();
+            for part in &mut message.parts {
+                if let MessagePart::Json { .. } = part {
+                    *part = MessagePart::Text {
+                        text: "[json omitted]".to_string(),
+                    };
+                }
+            }
+        }
+    }
+
+    let budget = MAX_JSON_RPC_BODY_BYTES.saturating_sub(2 * 1024);
+    for _ in 0..24 {
+        let size = serde_json::to_vec(result)
+            .map(|bytes| bytes.len())
+            .unwrap_or(0);
+        if size <= budget || !shrink_largest_text(result) {
+            return;
+        }
+    }
+}
+
+fn shrink_largest_text(result: &mut SendMessageResult) -> bool {
+    let Some(task) = result.task.as_mut() else {
+        return false;
+    };
+    let mut best_len = 0usize;
+    let mut best_artifact: Option<usize> = None;
+    let mut best_history: Option<(usize, usize)> = None;
+    for (index, artifact) in task.artifacts.iter().enumerate() {
+        if artifact.content.len() > best_len {
+            best_len = artifact.content.len();
+            best_artifact = Some(index);
+            best_history = None;
+        }
+    }
+    for (message_index, message) in task.history.iter().enumerate() {
+        for (part_index, part) in message.parts.iter().enumerate() {
+            if let MessagePart::Text { text } = part
+                && text.len() > best_len
+            {
+                best_len = text.len();
+                best_artifact = None;
+                best_history = Some((message_index, part_index));
+            }
+        }
+    }
+    if best_len <= 64 {
+        return false;
+    }
+    let keep = best_len / 2;
+    let shrink = |text: &mut String| {
+        let mut end = keep.min(text.len());
+        while end > 0 && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+        text.push_str("\n...[truncated]");
+    };
+    if let Some(index) = best_artifact {
+        shrink(&mut task.artifacts[index].content);
+        return true;
+    }
+    if let Some((message_index, part_index)) = best_history
+        && let MessagePart::Text { text } = &mut task.history[message_index].parts[part_index]
+    {
+        shrink(text);
+        return true;
+    }
+    false
+}
+
 pub fn text_message(
     message_id: impl Into<String>,
     role: MessageRole,
@@ -366,7 +445,12 @@ pub fn text_message(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_endpoint;
+    use platform_domain::Artifact;
+
+    use super::{
+        A2ATask, MAX_JSON_RPC_BODY_BYTES, MessagePart, MessageRole, SendMessageResult, TaskState,
+        constrain_send_result, text_message, validate_endpoint,
+    };
 
     #[test]
     fn endpoint_validation_allows_loopback_and_rejects_other_hosts() {
@@ -379,5 +463,39 @@ mod tests {
 
         let error = validate_endpoint("ftp://127.0.0.1/a2a").expect_err("scheme");
         assert!(error.to_string().contains("unsupported endpoint scheme"));
+    }
+
+    #[test]
+    fn send_result_stays_under_the_json_rpc_body_cap() {
+        let mut history = text_message("msg-1", MessageRole::User, None, None, "prompt");
+        history
+            .metadata
+            .insert("constraints".to_string(), "约束".repeat(80_000));
+        history.parts.push(MessagePart::Json {
+            value: serde_json::json!({"blob": "x".repeat(80_000)}),
+        });
+        let mut result = SendMessageResult {
+            task: Some(A2ATask {
+                id: "task-1".to_string(),
+                context_id: None,
+                status: TaskState::Completed,
+                history: vec![history],
+                artifacts: vec![Artifact {
+                    artifact_id: "artifact-1".to_string(),
+                    name: "out.md".to_string(),
+                    mime_type: "text/markdown".to_string(),
+                    content: "y".repeat(400_000),
+                }],
+            }),
+            message: None,
+        };
+
+        constrain_send_result(&mut result);
+
+        let encoded = serde_json::to_vec(&result).expect("result encodes");
+        assert!(encoded.len() <= MAX_JSON_RPC_BODY_BYTES - 2 * 1024);
+        let task = result.task.expect("task remains");
+        assert!(task.history[0].metadata.is_empty());
+        assert!(task.artifacts[0].content.contains("[truncated]"));
     }
 }

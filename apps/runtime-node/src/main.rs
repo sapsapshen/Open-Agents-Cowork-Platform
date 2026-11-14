@@ -368,15 +368,15 @@ async fn process_message_inner(state: &AppState, message: Message) -> Result<Sen
         artifacts: vec![artifact],
     };
 
-    state
-        .tasks
-        .write()
-        .await
-        .insert(task.id.clone(), task.clone());
-    Ok(SendMessageResult {
+    let mut result = SendMessageResult {
         task: Some(task),
         message: None,
-    })
+    };
+    platform_a2a::constrain_send_result(&mut result);
+    if let Some(task) = result.task.clone() {
+        state.tasks.write().await.insert(task.id.clone(), task);
+    }
+    Ok(result)
 }
 
 async fn consult_peers(
@@ -504,7 +504,7 @@ fn render_plan(runtime: &RuntimeDescriptor, prompt: &str, metadata: &Metadata) -
         bounded_text(prompt, 4_000),
         metadata
             .get("constraints")
-            .cloned()
+            .map(|value| bounded_text(value, 4_000))
             .unwrap_or_else(|| "none".to_string())
     )
 }
@@ -747,6 +747,28 @@ mod tests {
     use chrono::Utc;
 
     use super::*;
+
+    #[test]
+    fn plan_constraints_are_bounded() {
+        let runtime = RuntimeDescriptor {
+            runtime_id: "planner-1".to_string(),
+            agent_id: "planner-1".to_string(),
+            display_name: "planner".to_string(),
+            endpoint: "http://127.0.0.1:1/a2a".to_string(),
+            profile: "planner".to_string(),
+            trust_tier: 1,
+            cost_per_task: 1.0,
+            capabilities: vec![],
+            health: Default::default(),
+            load: Default::default(),
+            metadata: Metadata::new(),
+        };
+        let mut metadata = Metadata::new();
+        metadata.insert("constraints".to_string(), "c".repeat(20_000));
+        let plan = render_plan(&runtime, "objective", &metadata);
+        assert!(plan.contains("[truncated]"));
+        assert!(plan.len() < 8_000);
+    }
 
     #[test]
     fn synthesis_output_stays_bounded_for_large_inputs() {

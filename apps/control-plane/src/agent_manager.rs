@@ -4,8 +4,9 @@ use platform_core::RuntimeRegistry;
 use platform_domain::AgentConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::process::{Child, Command};
 use tracing::{error, info, warn};
 
@@ -27,7 +28,9 @@ pub struct DetectedAgent {
 struct AgentState {
     config: AgentConfig,
     pid: Option<u32>,
-    status: String, // "stopped", "running", "error"
+    status: String, // "stopped", "running", "starting", "error"
+    #[serde(default)]
+    launch_generation: u64,
 }
 
 #[derive(Clone)]
@@ -36,6 +39,7 @@ pub struct AgentManager {
     registry: RuntimeRegistry,
     data_dir: PathBuf,
     control_plane_url: String,
+    shutting_down: Arc<AtomicBool>,
 }
 
 impl AgentManager {
@@ -45,6 +49,7 @@ impl AgentManager {
             registry,
             data_dir,
             control_plane_url,
+            shutting_down: Arc::new(AtomicBool::new(false)),
         };
         let _ = this.load();
         this
@@ -68,6 +73,7 @@ impl AgentManager {
                         config: redact_agent_secret(&state.config),
                         pid: state.pid,
                         status: state.status.clone(),
+                        launch_generation: state.launch_generation,
                     },
                 )
             })
@@ -95,6 +101,7 @@ impl AgentManager {
             .map(|(k, mut v)| {
                 v.pid = None;
                 v.status = "stopped".into();
+                v.launch_generation = 0;
                 (k, v)
             })
             .collect();
@@ -132,6 +139,7 @@ impl AgentManager {
             config: config.clone(),
             pid: None,
             status: "stopped".into(),
+            launch_generation: 0,
         };
         guard.insert(config.id.clone(), state);
         drop(guard);
@@ -180,37 +188,34 @@ impl AgentManager {
             .unwrap_or_else(|| "not_found".into())
     }
 
+    pub fn begin_shutdown(&self) {
+        self.shutting_down.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_shutting_down(&self) -> bool {
+        self.shutting_down.load(Ordering::SeqCst)
+    }
+
     pub async fn launch_agent(&self, id: &str) -> Result<()> {
-        let config = {
-            let guard = self.inner.read();
-            let state = guard
-                .get(id)
-                .ok_or_else(|| anyhow::anyhow!("agent {id} not found"))?;
-            if state.status == "running" || state.status == "starting" {
-                anyhow::bail!("agent {id} is already running");
+        let (config, generation) = self.reserve_launch(id)?;
+        let mut child = match spawn_agent_adapter(&config, &self.control_plane_url) {
+            Ok(child) => child,
+            Err(error) => {
+                self.release_launch(id, generation);
+                return Err(error).context("failed to spawn agent-adapter process");
             }
-            if let Some(pid) = state.pid
-                && check_pid_alive(pid)
-            {
-                anyhow::bail!("agent {id} is already running (pid {pid})");
-            }
-            state.config.clone()
         };
-        let mut child = spawn_agent_adapter(&config, &self.control_plane_url)
-            .context("failed to spawn agent-adapter process")?;
-        let pid = child
-            .id()
-            .ok_or_else(|| anyhow::anyhow!("child has no pid"))?;
-        // Update state to "starting" before spawning background monitor
-        {
-            let mut guard = self.inner.write();
-            if let Some(state) = guard.get_mut(id) {
-                state.pid = Some(pid);
-                state.status = "starting".into();
-            }
+        let Some(pid) = child.id() else {
+            let _ = child.start_kill();
+            self.release_launch(id, generation);
+            anyhow::bail!("child has no pid");
+        };
+        if !self.record_launch_pid(id, generation, pid) {
+            let _ = child.start_kill();
+            self.release_launch(id, generation);
+            anyhow::bail!("agent {id} launch was superseded");
         }
         self.save();
-        // Monitor the child process in background
         let inner = self.inner.clone();
         let registry = self.registry.clone();
         let monitor_id = id.to_string();
@@ -219,7 +224,9 @@ impl AgentManager {
             registry.remove(&monitor_id);
             {
                 let mut guard = inner.write();
-                if let Some(state) = guard.get_mut(&monitor_id) {
+                if let Some(state) = guard.get_mut(&monitor_id)
+                    && state.launch_generation == generation
+                {
                     state.pid = None;
                     state.status = "stopped".into();
                 }
@@ -237,24 +244,27 @@ impl AgentManager {
                 }
             }
         });
-        // Wait for the agent to register with the control-plane (up to 10 seconds)
         let registry = self.registry.clone();
         let wait_id = id.to_string();
         for _ in 0..20 {
+            if self.is_shutting_down() {
+                anyhow::bail!("control plane is shutting down");
+            }
             if registry.get(&wait_id).is_some() {
-                // Agent registered successfully
                 let mut guard = self.inner.write();
-                if let Some(state) = guard.get_mut(&wait_id) {
+                if let Some(state) = guard.get_mut(&wait_id)
+                    && state.launch_generation == generation
+                {
                     state.status = "running".into();
                 }
                 return Ok(());
             }
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
-        // Registration timed out — set to error but keep process running (it may still register)
         {
             let mut guard = self.inner.write();
             if let Some(state) = guard.get_mut(&wait_id)
+                && state.launch_generation == generation
                 && state.status == "starting"
             {
                 state.status = "error".into();
@@ -263,6 +273,55 @@ impl AgentManager {
         Err(anyhow::anyhow!(
             "agent {id} failed to register within 10 seconds — check agent-adapter logs for registration errors"
         ))
+    }
+
+    fn reserve_launch(&self, id: &str) -> Result<(AgentConfig, u64)> {
+        let mut guard = self.inner.write();
+        if self.is_shutting_down() {
+            anyhow::bail!("control plane is shutting down");
+        }
+        let state = guard
+            .get_mut(id)
+            .ok_or_else(|| anyhow::anyhow!("agent {id} not found"))?;
+        if state.status == "running" || state.status == "starting" {
+            anyhow::bail!("agent {id} is already running");
+        }
+        if let Some(pid) = state.pid
+            && check_pid_alive(pid)
+        {
+            anyhow::bail!("agent {id} is already running (pid {pid})");
+        }
+        state.launch_generation = state.launch_generation.wrapping_add(1);
+        state.status = "starting".into();
+        state.pid = None;
+        Ok((state.config.clone(), state.launch_generation))
+    }
+
+    fn record_launch_pid(&self, id: &str, generation: u64, pid: u32) -> bool {
+        let mut guard = self.inner.write();
+        if self.is_shutting_down() {
+            return false;
+        }
+        let Some(state) = guard.get_mut(id) else {
+            return false;
+        };
+        if state.launch_generation != generation {
+            return false;
+        }
+        state.pid = Some(pid);
+        state.status = "starting".into();
+        true
+    }
+
+    fn release_launch(&self, id: &str, generation: u64) {
+        let mut guard = self.inner.write();
+        if let Some(state) = guard.get_mut(id)
+            && state.launch_generation == generation
+            && state.status == "starting"
+        {
+            state.pid = None;
+            state.status = "stopped".into();
+        }
     }
 
     pub fn stop_agent(&self, id: &str) -> Result<()> {
@@ -333,6 +392,9 @@ impl AgentManager {
             .map(|(id, _)| id.clone())
             .collect::<Vec<_>>();
         for id in ids {
+            if self.is_shutting_down() {
+                break;
+            }
             if let Err(error) = self.launch_agent(&id).await {
                 warn!("auto-launch failed for {id}: {error}");
             }
@@ -688,10 +750,13 @@ fn apply_backend_env(cmd: &mut Command, config: &AgentConfig) {
         Ok(value) if !value.trim().is_empty() => {
             cmd.env("OPENAI_API_KEY", value);
         }
-        _ => warn!(
-            "agent {} api_key_env {var_name} is unset; the OpenAI request will have no API key",
-            config.id
-        ),
+        _ => {
+            cmd.env_remove("OPENAI_API_KEY");
+            warn!(
+                "agent {} api_key_env {var_name} is unset; OPENAI_API_KEY was removed from the child environment",
+                config.id
+            );
+        }
     }
 }
 
@@ -767,31 +832,41 @@ fn normalize_stdio_args(command: &str, configured_args: &[String]) -> (Vec<Strin
     }
 }
 
+fn adapter_file_name() -> String {
+    format!("agent-adapter{}", std::env::consts::EXE_SUFFIX)
+}
+
+fn adapter_candidates(exe: &Path) -> Vec<PathBuf> {
+    let file_name = adapter_file_name();
+    let Some(directory) = exe.parent() else {
+        return Vec::new();
+    };
+    let mut candidates = vec![directory.join(&file_name)];
+    let workspace = exe.ancestors().nth(3).unwrap_or(Path::new("."));
+    for profile in ["debug", "release"] {
+        candidates.push(workspace.join("target").join(profile).join(&file_name));
+    }
+    candidates
+}
+
+fn find_on_path(file_name: &str) -> Option<PathBuf> {
+    let paths = std::env::var_os("PATH")?;
+    std::env::split_paths(&paths).find_map(|directory| {
+        let candidate = directory.join(file_name);
+        candidate.is_file().then_some(candidate)
+    })
+}
+
 fn find_agent_adapter_bin() -> Result<String> {
-    if let Ok(path) = std::env::current_exe()
-        && let Some(directory) = path.parent()
-    {
-        let sibling = directory.join("agent-adapter");
-        if sibling.exists() {
-            return Ok(sibling.to_string_lossy().to_string());
-        }
-        let workspace = path.ancestors().nth(3).unwrap_or(std::path::Path::new("."));
-        for profile in ["debug", "release"] {
-            let candidate = workspace.join("target").join(profile).join("agent-adapter");
-            if candidate.exists() {
-                return Ok(candidate.to_string_lossy().to_string());
+    if let Ok(path) = std::env::current_exe() {
+        for candidate in adapter_candidates(&path) {
+            if candidate.is_file() {
+                return Ok(candidate.to_string_lossy().into_owned());
             }
         }
     }
-    if let Ok(path) = std::process::Command::new("which")
-        .arg("agent-adapter")
-        .output()
-        && path.status.success()
-    {
-        let found = String::from_utf8_lossy(&path.stdout).trim().to_string();
-        if !found.is_empty() {
-            return Ok(found);
-        }
+    if let Some(found) = find_on_path(&adapter_file_name()) {
+        return Ok(found.to_string_lossy().into_owned());
     }
     anyhow::bail!(
         "agent-adapter binary not found. Build with `cargo build --workspace` or place it on PATH."
@@ -1040,5 +1115,58 @@ mod tests {
         let (args, message_on_cli) = normalize_stdio_args("/usr/local/bin/codex", &[]);
         assert_eq!(args, vec!["exec"]);
         assert!(!message_on_cli);
+    }
+
+    #[tokio::test]
+    async fn launch_refuses_after_shutdown_starts() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time is monotonic")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("agent-manager-shutdown-test-{unique}"));
+        let manager = AgentManager::new(
+            dir.clone(),
+            "http://127.0.0.1:9000".to_string(),
+            RuntimeRegistry::new(),
+        );
+        manager.add_agent(openai_config()).expect("agent added");
+        manager.begin_shutdown();
+
+        let error = manager
+            .launch_agent("agent-1")
+            .await
+            .expect_err("shutdown must reject new launches");
+        assert!(error.to_string().contains("shutting down"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn missing_api_key_env_removes_inherited_openai_key() {
+        let mut config = openai_config();
+        config.api_key = None;
+        config.api_key_env = Some("PLATFORM_TEST_MISSING_OPENAI_KEY".to_string());
+        let mut command = Command::new("agent-adapter");
+        apply_backend_env(&mut command, &config);
+
+        let removed = command
+            .as_std()
+            .get_envs()
+            .any(|(key, value)| key == "OPENAI_API_KEY" && value.is_none());
+        assert!(removed);
+    }
+
+    #[test]
+    fn adapter_candidates_include_the_platform_executable_suffix() {
+        let exe = PathBuf::from("/tmp/workspace/target/debug/control-plane");
+        let candidates = adapter_candidates(&exe);
+        let expected = adapter_file_name();
+        assert!(candidates.len() >= 3);
+        assert!(
+            candidates
+                .iter()
+                .all(|path| path.file_name().and_then(|name| name.to_str())
+                    == Some(expected.as_str()))
+        );
     }
 }

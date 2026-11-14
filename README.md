@@ -102,7 +102,7 @@ A Rust-first, capability-aware multi-agent orchestration platform built on a JSO
 }
 ```
 
-API 密钥不要写进上面的后端 JSON。在 Dashboard 里填写的 `api_key` 只留在控制平面进程内存中，保存到 `target/platform-runtime/agents.json` 时会被抹掉，接口响应里也不会返回。重启后需要重新填写，或者在 Agent 上设置 `api_key_env`（例如 `OPENAI_API_KEY`），启动时从控制平面的环境变量读出并传给适配器。适配器调用模型时使用 `OPENAI_API_KEY`，密钥不会出现在命令行参数里。
+API 密钥不要写进上面的后端 JSON。在 Dashboard 里填写的 `api_key` 只留在控制平面进程内存中，保存到 `target/platform-runtime/agents.json` 时会被抹掉，接口响应里也不会返回。重启后需要重新填写，或者在 Agent 上设置 `api_key_env`（例如 `OPENAI_API_KEY`），启动时从控制平面的环境变量读出并传给适配器。如果这个变量没有设置或是空白，子进程里的 `OPENAI_API_KEY` 会被清掉，避免误用控制平面自己继承到的密钥。适配器调用模型时使用 `OPENAI_API_KEY`，密钥不会出现在命令行参数里。
 
 Claude Code 后端执行 `claude -p --output-format text`，提示从标准输入进入，避免交互式 REPL 不退出。Codex 后端执行 `codex exec`，同样从标准输入读提示。OpenAI 兼容调用里，`gpt-5`、`gpt-4.1`、`o1`、`o3`、`o4` 使用 `max_completion_tokens`；如果服务端拒绝该字段，会自动换 `max_tokens` 再试一次。Ollama 等本地端点默认仍使用 `max_tokens`。
 
@@ -281,7 +281,7 @@ cargo run -p control-plane -- --bind 127.0.0.1:9000
 - 出站 Runtime 端点通过 `PLATFORM_ALLOWED_HOSTS` 白名单限制，默认只允许环回地址
 - 工作负载有上限：目标最多 10000 个字符，最多 50 条约束，每条约束最多 4000 个字符，A2A 响应最多 256 KiB。空白目标会被拒绝
 - 每次 A2A JSON-RPC 调用有 60 秒超时，不依赖更短的客户端默认超时
-- 收到 SIGINT / SIGTERM 时，控制平面会停掉它启动的 agent-adapter；适配器超时或被取消时会杀掉自己拉起的 CLI 子进程
+- 收到 SIGINT / SIGTERM 时，控制平面会先拒绝新的启动、停掉自动启动任务，再停掉它启动的 agent-adapter，并关闭 Dashboard 的 SSE 连接，避免进程一直等着事件流。适配器超时或被取消时会杀掉自己拉起的 CLI 子进程
 - API 密钥不会写入 `agents.json`，也不会出现在适配器命令行中
 
 ---

@@ -71,6 +71,7 @@ async fn main() -> Result<()> {
 
     let auto_launch = agent_manager.clone();
     let shutdown_agents = agent_manager.clone();
+    let shutdown_dashboard = dashboard_state.clone();
     let state = AppState {
         a2a_client,
         registry,
@@ -103,13 +104,20 @@ async fn main() -> Result<()> {
 
     info!("control-plane listening on {}", args.bind);
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
-    tokio::spawn(async move {
+    let auto_launch_task = tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if auto_launch.is_shutting_down() {
+            return;
+        }
         auto_launch.launch_auto_agents().await;
     });
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             shutdown_signal().await;
+            shutdown_agents.begin_shutdown();
+            auto_launch_task.abort();
+            let _ = auto_launch_task.await;
+            shutdown_dashboard.request_shutdown();
             shutdown_agents.stop_all();
         })
         .await?;
