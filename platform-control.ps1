@@ -93,18 +93,18 @@ function Stop-TrackedProcesses {
         $lines = netstat -ano 2>$null | Select-String "LISTENING" | Select-String ":$port "
         foreach ($line in $lines) {
             $parts = $line.Line.Trim() -split '\s+'
-            $pid = $parts[-1]
-            if ($pid -match '^\d+$') {
-                $orphanPids.Add([int]$pid)
+            $processId = $parts[-1]
+            if ($processId -match '^\d+$') {
+                $orphanPids.Add([int]$processId)
             }
         }
     }
     $uniquePids = $orphanPids | Sort-Object -Unique
     if ($uniquePids.Count -gt 0) {
         $killed = 0
-        foreach ($pid in $uniquePids) {
+        foreach ($processId in $uniquePids) {
             try {
-                Stop-Process -Id $pid -Force -ErrorAction Stop
+                Stop-Process -Id $processId -Force -ErrorAction Stop
                 $killed++
             } catch {
                 # process may have exited already
@@ -270,6 +270,7 @@ function Start-Platform {
         Write-Host "Platform is running in background processes."
         Write-Host ""
         Write-Host "Web endpoints:"
+        Write-Host "  Dashboard       {0}/dashboard" -f $ControlPlaneBaseUrl
         Write-Host "  Control Plane   {0}/" -f $ControlPlaneBaseUrl
         Write-Host "  Planner         http://127.0.0.1:9101/"
         Write-Host "  Builder         http://127.0.0.1:9102/"

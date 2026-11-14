@@ -272,7 +272,7 @@ impl WorkflowOrchestrator {
                 self.persist(workflow.clone());
                 self.notify_workflow_failed(&workflow_id, &error.to_string())
                     .await;
-                Err(error)
+                Err(error.context(format!("workflow {workflow_id} failed")))
             }
         }
     }
@@ -307,10 +307,11 @@ impl WorkflowOrchestrator {
         let mut attempt_errors = Vec::new();
 
         loop {
-            let scheduler_candidate = match self
-                .scheduler
-                .select_best(&self.registry.list(), &requirements, &excluded_runtime_ids)
-            {
+            let scheduler_candidate = match self.scheduler.select_best(
+                &self.registry.list(),
+                &requirements,
+                &excluded_runtime_ids,
+            ) {
                 Some(candidate) => candidate,
                 None if matches!(kind, WorkUnitKind::Review)
                     && attempt_errors.is_empty()
@@ -328,9 +329,15 @@ impl WorkflowOrchestrator {
                 None => {
                     let registered = self.registry.list();
                     return Err(if registered.is_empty() {
-                        anyhow!("no runtimes registered. Go to Settings > Add Agent to configure and launch an AI agent, or check that agent-adapter processes are running and have registered with the control-plane")
+                        anyhow!(
+                            "no runtimes registered. Go to Settings > Add Agent to configure and launch an AI agent, or check that agent-adapter processes are running and have registered with the control-plane"
+                        )
                     } else if attempt_errors.is_empty() {
-                        anyhow!("no runtime available for stage {:?} — {} runtime(s) registered but none meet the requirements (capabilities, heartbeat, or capacity)", kind, registered.len())
+                        anyhow!(
+                            "no runtime available for stage {:?} — {} runtime(s) registered but none meet the requirements (capabilities, heartbeat, or capacity)",
+                            kind,
+                            registered.len()
+                        )
                     } else {
                         anyhow!(
                             "all available runtimes failed for stage {:?}: {}",
@@ -519,9 +526,9 @@ impl WorkflowOrchestrator {
                 max_cost: None,
                 trust_tier: Some(1),
             };
-            if let Some(candidate) = self
-                .scheduler
-                .select_best(&self.registry.list(), &task_requirements, &deny)
+            if let Some(candidate) =
+                self.scheduler
+                    .select_best(&self.registry.list(), &task_requirements, &deny)
             {
                 deny.push(candidate.runtime.runtime_id.clone());
                 collaborators.push(candidate.runtime);
@@ -561,17 +568,17 @@ impl WorkflowOrchestrator {
 
         match parse_review_disposition(&review_output.content)? {
             ReviewDisposition::Approved => {
-                workflow.audit_log.push(
-                    "review approved execution output; continuing to synthesis".to_string(),
-                );
+                workflow
+                    .audit_log
+                    .push("review approved execution output; continuing to synthesis".to_string());
                 workflow.updated_at = Utc::now();
                 self.persist(workflow.clone());
                 Ok(execute_output)
             }
             ReviewDisposition::RevisionRequired => {
-                workflow.audit_log.push(
-                    "review requested revision; dispatching revise stage".to_string(),
-                );
+                workflow
+                    .audit_log
+                    .push("review requested revision; dispatching revise stage".to_string());
                 workflow.updated_at = Utc::now();
                 self.persist(workflow.clone());
 
@@ -620,8 +627,7 @@ impl WorkflowOrchestrator {
                 match parse_review_disposition(&second_review.content)? {
                     ReviewDisposition::Approved => {
                         workflow.audit_log.push(
-                            "review approved revised output; continuing to synthesis"
-                                .to_string(),
+                            "review approved revised output; continuing to synthesis".to_string(),
                         );
                         workflow.updated_at = Utc::now();
                         self.persist(workflow.clone());
@@ -757,11 +763,7 @@ fn build_execute_step_prompt(
             .iter()
             .enumerate()
             .map(|(index, artifact)| {
-                format!(
-                    "Step {} output:\n{}",
-                    index + 1,
-                    artifact.content.trim()
-                )
+                format!("Step {} output:\n{}", index + 1, artifact.content.trim())
             })
             .collect::<Vec<_>>()
             .join("\n\n")
@@ -921,7 +923,10 @@ fn normalize_plan_step(line: &str) -> Option<String> {
 }
 
 fn strip_numbered_step_prefix(line: &str) -> Option<&str> {
-    let digit_count = line.chars().take_while(|char| char.is_ascii_digit()).count();
+    let digit_count = line
+        .chars()
+        .take_while(|char| char.is_ascii_digit())
+        .count();
     if digit_count == 0 || line.len() <= digit_count + 1 {
         return None;
     }
@@ -956,18 +961,29 @@ fn format_error_chain(error: &anyhow::Error) -> String {
 }
 
 fn parse_review_disposition(review_output: &str) -> Result<ReviewDisposition> {
-    let normalized = review_output.trim().to_ascii_uppercase();
-    let first_line = normalized.lines().next().unwrap_or_default().trim();
+    let first_line = review_output.lines().next().unwrap_or("").trim();
+    let normalized = first_line
+        .trim_matches(|character: char| {
+            character.is_ascii_punctuation() || character == '*' || character == '`'
+        })
+        .trim()
+        .to_ascii_uppercase();
+    let token = normalized
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_matches(|character: char| {
+            character.is_ascii_punctuation() || character == '*' || character == '`'
+        });
 
-    if first_line.starts_with("REVISION_REQUIRED")
-        || first_line.starts_with("NEEDS_REVISION")
-        || first_line.starts_with("REQUIRES_REVISION")
-        || normalized.contains("REVISION_REQUIRED")
-        || normalized.contains("NEEDS REVISION")
-        || normalized.contains("REQUIRES REVISION")
+    if matches!(
+        token,
+        "REVISION_REQUIRED" | "NEEDS_REVISION" | "REQUIRES_REVISION"
+    ) || normalized.starts_with("NEEDS REVISION")
+        || normalized.starts_with("REQUIRES REVISION")
     {
         Ok(ReviewDisposition::RevisionRequired)
-    } else if first_line == "APPROVED" {
+    } else if token == "APPROVED" {
         Ok(ReviewDisposition::Approved)
     } else {
         Err(anyhow!(
@@ -983,21 +999,21 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
 
+    use super::{
+        ReviewDisposition, WorkflowOrchestrator, parse_plan_steps, parse_review_disposition,
+    };
+    use crate::RuntimeRegistry;
     use anyhow::Result;
     use axum::{Json, Router, routing::post};
     use chrono::Utc;
     use platform_a2a::{
-        A2aClient, A2ATask, JsonRpcRequest, JsonRpcResponse, MessagePart, SendMessageParams,
+        A2ATask, A2aClient, JsonRpcRequest, JsonRpcResponse, MessagePart, SendMessageParams,
         SendMessageResult, TaskState,
     };
     use platform_domain::{
         Artifact, CapabilitySignal, HealthStatus, Metadata, RuntimeDescriptor, RuntimeHealth,
         RuntimeLoad, WorkUnitKind, WorkflowRequest,
     };
-    use super::{
-        ReviewDisposition, WorkflowOrchestrator, parse_plan_steps, parse_review_disposition,
-    };
-    use crate::RuntimeRegistry;
 
     #[test]
     fn review_parser_detects_revision_requests() {
@@ -1016,9 +1032,11 @@ mod tests {
         let error = parse_review_disposition("Looks good overall")
             .expect_err("ambiguous review output must fail closed");
 
-        assert!(error
-            .to_string()
-            .contains("review output missing explicit verdict"));
+        assert!(
+            error
+                .to_string()
+                .contains("review output missing explicit verdict")
+        );
     }
 
     #[test]
@@ -1027,7 +1045,21 @@ mod tests {
             parse_review_disposition("APPROVED\nLooks good"),
             Ok(ReviewDisposition::Approved)
         ));
+        assert!(matches!(
+            parse_review_disposition("**APPROVED.**\nReady"),
+            Ok(ReviewDisposition::Approved)
+        ));
         assert!(parse_review_disposition("Looks APPROVED to me").is_err());
+    }
+
+    #[test]
+    fn review_parser_ignores_revision_words_after_an_approval() {
+        assert!(matches!(
+            parse_review_disposition(
+                "APPROVED\nEarlier this would have been REVISION_REQUIRED, but the issues are fixed."
+            ),
+            Ok(ReviewDisposition::Approved)
+        ));
     }
 
     #[test]
@@ -1199,7 +1231,15 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             stage_kinds,
-            vec!["Plan", "Execute", "Execute", "Review", "Revise", "Review", "Synthesize"]
+            vec![
+                "Plan",
+                "Execute",
+                "Execute",
+                "Review",
+                "Revise",
+                "Review",
+                "Synthesize"
+            ]
         );
         assert_eq!(
             record.final_report.expect("final report").content,
@@ -1208,7 +1248,9 @@ mod tests {
         assert_eq!(review_calls.load(Ordering::SeqCst), 2);
         assert_eq!(execute_calls.load(Ordering::SeqCst), 2);
 
-        let runtime = registry.get("runtime-1").expect("runtime remains registered");
+        let runtime = registry
+            .get("runtime-1")
+            .expect("runtime remains registered");
         let implementation = runtime
             .capabilities
             .iter()
@@ -1228,8 +1270,8 @@ mod tests {
         let app = Router::new().route(
             "/a2a",
             post(|Json(request): Json<JsonRpcRequest>| async move {
-                let params: SendMessageParams = serde_json::from_value(request.params)
-                    .expect("valid sendMessage params");
+                let params: SendMessageParams =
+                    serde_json::from_value(request.params).expect("valid sendMessage params");
                 let role = params
                     .message
                     .metadata
@@ -1308,10 +1350,12 @@ mod tests {
 
         assert_eq!(record.status, platform_domain::WorkflowStatus::Completed);
         assert_eq!(record.final_report.expect("final report").content, "OK");
-        assert!(record
-            .audit_log
-            .iter()
-            .any(|entry| entry.contains("no dedicated reviewer available")));
+        assert!(
+            record
+                .audit_log
+                .iter()
+                .any(|entry| entry.contains("no dedicated reviewer available"))
+        );
         assert!(record.work_units.iter().any(|unit| {
             matches!(unit.kind, WorkUnitKind::Review)
                 && unit.assigned_runtime_id.as_deref() == Some("runtime-1")

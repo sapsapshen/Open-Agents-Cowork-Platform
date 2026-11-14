@@ -114,6 +114,8 @@
     width: auto;
   }
   .lang-select:hover { color: var(--text); }
+  .token-input { width: 148px; font-size: 12px; padding: 4px 8px; }
+  .token-btn { font-size: 12px; padding: 4px 8px; }
   .app-header .connection {
     font-size: 12px;
     display: flex;
@@ -334,6 +336,8 @@
     <a href="#/settings" data-nav data-i18n="navSettings">Settings</a>
   </nav>
   <div class="right-group">
+    <input id="token-input" class="token-input" type="password" autocomplete="off" data-i18n-placeholder="tokenPlaceholder" placeholder="API token">
+    <button type="button" class="token-btn" onclick="saveToken()" data-i18n="saveTokenBtn">Save token</button>
     <select class="lang-select" id="lang-select" onchange="setLang(this.value)">
       <option value="en">English</option>
       <option value="zh">简体中文</option>
@@ -453,6 +457,11 @@
           <div class="form-group">
             <label for="agent-api-key" data-i18n="agentApiKeyLabel">API Key (optional)</label>
             <input id="agent-api-key" type="password" data-i18n-placeholder="agentApiKeyPlaceholder" placeholder="sk-...">
+            <p style="font-size:12px;color:var(--text-muted);margin-top:4px;" data-i18n="agentApiKeyHint">The key stays in memory for this process and is not written to disk. Leave blank to keep the current key.</p>
+          </div>
+          <div class="form-group">
+            <label for="agent-api-key-env" data-i18n="agentApiKeyEnvLabel">API key environment variable</label>
+            <input id="agent-api-key-env" data-i18n-placeholder="agentApiKeyEnvPlaceholder" placeholder="OPENAI_API_KEY">
           </div>
         </div>
         <!-- CLI fields -->
@@ -503,6 +512,12 @@ const I18N = {
     agentModelPlaceholder: 'e.g. llama3, gpt-4o',
     agentApiKeyLabel: 'API Key (optional)',
     agentApiKeyPlaceholder: 'sk-...',
+    agentApiKeyHint: 'The key stays in memory for this process and is not written to disk. Leave blank to keep the current key. Set an environment variable name below to survive restarts.',
+    agentApiKeyEnvLabel: 'API key environment variable',
+    agentApiKeyEnvPlaceholder: 'OPENAI_API_KEY',
+    saveTokenBtn: 'Save token',
+    tokenPlaceholder: 'API token',
+    tokenSaved: 'API token saved in this browser',
     agentCommandLabel: 'Command',
     agentCommandPlaceholder: 'e.g. /usr/local/bin/ai',
     agentArgsLabel: 'Arguments (space-separated)',
@@ -622,6 +637,12 @@ const I18N = {
     agentModelPlaceholder: '例如：llama3、gpt-4o',
     agentApiKeyLabel: 'API 密钥（可选）',
     agentApiKeyPlaceholder: 'sk-...',
+    agentApiKeyHint: '密钥只保存在当前进程内存中，不会写入磁盘。留空表示保留已有密钥。填写环境变量名后，重启控制平面仍可读取。',
+    agentApiKeyEnvLabel: 'API 密钥环境变量',
+    agentApiKeyEnvPlaceholder: 'OPENAI_API_KEY',
+    saveTokenBtn: '保存令牌',
+    tokenPlaceholder: 'API 令牌',
+    tokenSaved: 'API 令牌已保存在此浏览器',
     agentCommandLabel: '命令',
     agentCommandPlaceholder: '例如：/usr/local/bin/ai',
     agentArgsLabel: '参数（空格分隔）',
@@ -740,6 +761,12 @@ const I18N = {
     agentModelPlaceholder: 'ej. llama3, gpt-4o',
     agentApiKeyLabel: 'Clave API (opcional)',
     agentApiKeyPlaceholder: 'sk-...',
+    agentApiKeyHint: 'La clave permanece en memoria de este proceso y no se escribe en disco. Déjela vacía para conservar la actual. Use una variable de entorno para que sobreviva a reinicios.',
+    agentApiKeyEnvLabel: 'Variable de entorno de la clave',
+    agentApiKeyEnvPlaceholder: 'OPENAI_API_KEY',
+    saveTokenBtn: 'Guardar token',
+    tokenPlaceholder: 'Token API',
+    tokenSaved: 'Token API guardado en este navegador',
     agentCommandLabel: 'Comando',
     agentCommandPlaceholder: 'ej. /usr/local/bin/ai',
     agentArgsLabel: 'Argumentos (separados por espacios)',
@@ -872,7 +899,7 @@ function applyI18n() {
 }
 
 // ── State ─────────────────────────────────────────────────
-const API_TOKEN = localStorage.getItem('platform_token') || 'local-review-token';
+let API_TOKEN = localStorage.getItem('platform_token') || 'local-review-token';
 let workflowsCache = [];
 let runtimesCache = [];
 let sseConnected = false;
@@ -905,7 +932,19 @@ function navigate() {
   }
 }
 window.addEventListener('hashchange', navigate);
+function saveToken() {
+  const value = document.getElementById('token-input').value.trim();
+  API_TOKEN = value || 'local-review-token';
+  localStorage.setItem('platform_token', API_TOKEN);
+  toast(t('tokenSaved'), 'success');
+  fetchWorkflows(true);
+  fetchRuntimes();
+  if ((location.hash || '#/') === '#/settings') fetchAgents();
+}
+
 window.addEventListener('load', () => {
+  const tokenInput = document.getElementById('token-input');
+  if (tokenInput && localStorage.getItem('platform_token')) tokenInput.value = API_TOKEN;
   setLang(currentLang);
   document.querySelectorAll('[data-nav]').forEach(a => {
     if (a.getAttribute('href') === (location.hash || '#/')) a.classList.add('active');
@@ -968,9 +1007,11 @@ function toast(msg, type = 'info') {
 let eventSource = null;
 
 function connectSSE() {
-  if (eventSource) eventSource.close();
+  if (eventSource) {
+    eventSource.onerror = null;
+    eventSource.close();
+  }
   eventSource = new EventSource('/api/events');
-  let lastId = 0;
 
   eventSource.onopen = () => {
     document.getElementById('sse-dot').className = 'status-dot green';
@@ -989,7 +1030,6 @@ function connectSSE() {
     document.getElementById('sse-dot').className = 'status-dot red';
     document.getElementById('sse-status').textContent = t('sseDisconnected');
     sseConnected = false;
-    setTimeout(connectSSE, 3000);
   };
 }
 
@@ -1010,8 +1050,9 @@ async function submitWorkflow() {
   if (!objective) { toast(t('pleaseEnterObjective'), 'error'); return; }
   const constraints = document.getElementById('constraints').value.split(',').map(s => s.trim()).filter(Boolean);
   const btn = document.getElementById('btn-submit');
+  const label = btn.querySelector('[data-i18n]');
   btn.disabled = true;
-  btn.textContent = t('submittingBtn');
+  if (label) label.textContent = t('submittingBtn');
   try {
     const result = await api('/workflows/submit', {
       method: 'POST',
@@ -1024,7 +1065,7 @@ async function submitWorkflow() {
     toast(`${t('submitFailed')}: ${e.message}`, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = t('submitBtn');
+    if (label) label.textContent = t('submitBtn');
   }
 }
 
@@ -1090,7 +1131,7 @@ async function renderWorkflowDetail(id) {
     const wf = await api(`/workflows/${id}`);
     el.innerHTML = workflowDetailHTML(wf);
   } catch (e) {
-    el.innerHTML = `<div class="empty-state">${t('failedToLoadWf')}: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty-state">${t('failedToLoadWf')}: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -1153,7 +1194,7 @@ function workflowDetailHTML(wf) {
           ${u.objective ? `<div class="tl-detail">${escHtml(u.objective.slice(0, 200))}</div>` : ''}
           ${u.instructions ? `<div class="tl-detail">${escHtml(u.instructions.slice(0, 200))}</div>` : ''}
           ${u.output?.content ? `<details style="margin-top:8px;"><summary style="font-size:13px;cursor:pointer;color:var(--accent);">${t('viewOutput')}</summary><pre style="background:#0d1117;border:1px solid var(--border);border-radius:4px;padding:8px;margin-top:4px;font-size:12px;overflow-x:auto;max-height:200px;">${escHtml(u.output.content)}</pre></details>` : ''}
-          ${u.review_feedback ? `<div style="margin-top:8px;padding:8px;background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.2);border-radius:4px;font-size:12px;color:var(--yellow);">${escHtml(u.review_feedback)}</div>` : ''}
+          ${(Array.isArray(u.review_feedback) && u.review_feedback.length) ? `<div style="margin-top:8px;padding:8px;background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.2);border-radius:4px;font-size:12px;color:var(--yellow);">${u.review_feedback.map(escHtml).join('<br>')}</div>` : ''}
         </div>
         `).join('')}
       </div>
@@ -1185,7 +1226,7 @@ async function fetchRuntimes() {
     runtimesCache = Array.isArray(data) ? data : [];
     renderRuntimes();
   } catch (e) {
-    el.innerHTML = `<div class="empty-state">${t('failedToLoadRuntimes')}: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty-state">${t('failedToLoadRuntimes')}: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -1246,7 +1287,7 @@ async function fetchAgents() {
     agentsCache = Array.isArray(data) ? data : [];
     renderAgents();
   } catch (e) {
-    el.innerHTML = `<div class="empty-state">${t('agentLoadFailed')}: ${e.message}</div>`;
+    el.innerHTML = `<div class="empty-state">${t('agentLoadFailed')}: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -1312,6 +1353,7 @@ function showAddAgentForm() {
   document.getElementById('agent-base-url').value = '';
   document.getElementById('agent-model').value = '';
   document.getElementById('agent-api-key').value = '';
+  document.getElementById('agent-api-key-env').value = '';
   document.getElementById('agent-command').value = '';
   document.getElementById('agent-args').value = '';
   document.getElementById('agent-modal-title').textContent = t('addAgentTitle');
@@ -1329,6 +1371,7 @@ function showEditAgentForm(id) {
   document.getElementById('agent-base-url').value = cfg.base_url || '';
   document.getElementById('agent-model').value = cfg.model || '';
   document.getElementById('agent-api-key').value = cfg.api_key || '';
+  document.getElementById('agent-api-key-env').value = cfg.api_key_env || '';
   document.getElementById('agent-command').value = cfg.command || '';
   document.getElementById('agent-args').value = (cfg.args || []).join(' ');
   document.getElementById('agent-modal-title').textContent = t('editAgentTitle');
@@ -1357,6 +1400,7 @@ async function saveAgent() {
     config.base_url = document.getElementById('agent-base-url').value.trim() || undefined;
     config.model = document.getElementById('agent-model').value.trim() || undefined;
     config.api_key = document.getElementById('agent-api-key').value.trim() || undefined;
+    config.api_key_env = document.getElementById('agent-api-key-env').value.trim() || undefined;
   } else if (backendType === 'stdio') {
     config.command = document.getElementById('agent-command').value.trim() || undefined;
     const argsStr = document.getElementById('agent-args').value.trim();
@@ -1467,7 +1511,7 @@ function detectedRow(agent, showCheckbox) {
   const modelInfo = agent.model ? escHtml(agent.model) : '';
   return `
     <tr>
-      ${showCheckbox ? `<td><input type="checkbox" class="detect-chk" value="${escHtml(agent.name)}" data-id="${escHtml(agent.name.toLowerCase().replace(/[^a-z0-9-]/g, '-'))}" ${agent.already_configured ? 'disabled' : ''}></td>` : ''}
+      ${showCheckbox ? `<td><input type="checkbox" class="detect-chk" value="${escHtml(agent.id || agent.name)}" data-id="${escHtml(agent.id || agent.name.toLowerCase().replace(/[^a-z0-9-]/g, '-'))}" ${agent.already_configured ? 'disabled' : ''}></td>` : ''}
       <td>
         <strong>${escHtml(agent.name)}</strong>
         ${modelInfo ? `<div style="font-size:11px;color:var(--text-muted);">${modelInfo}</div>` : ''}
@@ -1488,12 +1532,9 @@ async function addSelectedDetected() {
   let added = 0;
   for (const cb of checkboxes) {
     const name = cb.getAttribute('data-id');
-    const agent = detectedCache.find(a => {
-      const aid = a.name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-      return aid === name;
-    });
+    const agent = detectedCache.find(a => (a.id || a.name.toLowerCase().replace(/[^a-z0-9-]/g, '-')) === name);
     if (!agent || agent.already_configured) continue;
-    const id = agent.name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const id = agent.id || agent.name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
     const config = {
       id,
       name: agent.name,

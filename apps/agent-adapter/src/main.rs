@@ -75,7 +75,7 @@ async fn main() -> Result<()> {
         .with_context(|| format!("invalid --backend JSON: {}", args.backend))?;
 
     let display_name = if args.display_name.is_empty() {
-        format!("agent-{}", &args.runtime_id)
+        format!("agent-{}", args.runtime_id)
     } else {
         args.display_name.clone()
     };
@@ -104,7 +104,8 @@ async fn main() -> Result<()> {
     let adapter = std::sync::Arc::new(AdapterState {
         runtime: runtime.clone(),
         backend,
-        tasks: tokio::sync::Mutex::new(std::collections::BTreeMap::new()),
+        tasks: tokio::sync::Mutex::new(agent_adapter::TaskBook::new()),
+        inflight: std::sync::atomic::AtomicU32::new(0),
     });
 
     let state = AppState {
@@ -120,6 +121,7 @@ async fn main() -> Result<()> {
     if args.auto_register {
         let control_plane = args.control_plane.clone();
         let runtime_clone = runtime.clone();
+        let adapter_for_heartbeat = adapter.clone();
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .connect_timeout(Duration::from_secs(10))
@@ -143,7 +145,10 @@ async fn main() -> Result<()> {
             if let Some(cp) = control_plane {
                 loop {
                     tokio::time::sleep(Duration::from_secs(5)).await;
-                    if let Err(e) = send_heartbeat(&client, &cp, &runtime_clone.runtime_id).await {
+                    let active_tasks = adapter_for_heartbeat.active_tasks();
+                    if let Err(e) =
+                        send_heartbeat(&client, &cp, &runtime_clone.runtime_id, active_tasks).await
+                    {
                         tracing::warn!(%e, "heartbeat failed");
                     }
                 }
@@ -151,8 +156,40 @@ async fn main() -> Result<()> {
         });
     }
 
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(signal) => signal,
+                Err(error) => {
+                    tracing::warn!(%error, "failed to install SIGTERM handler");
+                    let _ = ctrl_c.await;
+                    return;
+                }
+            };
+        tokio::select! {
+            result = ctrl_c => {
+                if let Err(error) = result {
+                    tracing::warn!(%error, "ctrl-c listener failed");
+                }
+            }
+            _ = terminate.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        if let Err(error) = ctrl_c.await {
+            tracing::warn!(%error, "ctrl-c listener failed");
+        }
+    }
 }
 
 async fn health() -> Json<Value> {
@@ -248,6 +285,7 @@ async fn send_heartbeat(
     client: &reqwest::Client,
     control_plane: &str,
     runtime_id: &str,
+    active_tasks: u32,
 ) -> Result<()> {
     validate_endpoint(control_plane)?;
     client
@@ -255,7 +293,7 @@ async fn send_heartbeat(
         .header(PLATFORM_TOKEN_HEADER, require_platform_api_token()?)
         .json(&serde_json::json!({
             "runtime_id": runtime_id,
-            "active_tasks": 0,
+            "active_tasks": active_tasks,
             "queued_tasks": 0,
             "availability": 0.99
         }))

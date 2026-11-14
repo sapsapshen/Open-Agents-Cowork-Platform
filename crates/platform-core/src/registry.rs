@@ -132,10 +132,21 @@ fn apply_capability_history(
 }
 
 fn load_capability_history(path: &PathBuf) -> BTreeMap<String, Vec<CapabilitySignal>> {
-    let Ok(data) = std::fs::read_to_string(path) else {
-        return BTreeMap::new();
+    let data = match std::fs::read_to_string(path) {
+        Ok(data) => data,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return BTreeMap::new(),
+        Err(error) => {
+            tracing::warn!(%error, path = %path.display(), "failed to read capability history");
+            return BTreeMap::new();
+        }
     };
-    serde_json::from_str(&data).unwrap_or_default()
+    match serde_json::from_str(&data) {
+        Ok(history) => history,
+        Err(error) => {
+            tracing::warn!(%error, path = %path.display(), "capability history is not valid JSON");
+            BTreeMap::new()
+        }
+    }
 }
 
 fn persist_capability_history(
@@ -149,10 +160,14 @@ fn persist_capability_history(
     let Ok(json) = serde_json::to_string_pretty(history) else {
         return;
     };
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    if let Some(parent) = path.parent()
+        && let Err(error) = std::fs::create_dir_all(parent)
+    {
+        tracing::warn!(%error, directory = %parent.display(), "failed to create capability history directory");
     }
-    let _ = std::fs::write(path, json);
+    if let Err(error) = std::fs::write(path, json) {
+        tracing::warn!(%error, path = %path.display(), "failed to persist capability history");
+    }
 }
 
 fn blend_success_rate(current: f32, success: bool) -> f32 {
